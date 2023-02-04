@@ -10,7 +10,7 @@ fn main() {
     for _ in 1..10 {
         thread::sleep(Duration::from_secs(1));
 
-        device.move_mouse_or_wheel(REL_WHEEL, 5).unwrap();
+        device.move_mouse_or_wheel(REL_WHEEL, 100).unwrap();
         device.move_mouse_or_wheel(REL_Y, 50).unwrap();
         device.synchronize().unwrap();
     }
