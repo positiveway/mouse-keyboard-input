@@ -1,0 +1,10 @@
+[package]
+name = "uinput_simple"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+ioctl-sys = "0.8.0"
+nix = "0.26.2"
+libudev = "0.3.0"
