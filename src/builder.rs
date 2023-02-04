@@ -6,8 +6,6 @@ use nix::{self, fcntl, unistd};
 use nix::errno::Errno;
 use nix::sys::stat;
 
-extern crate libudev as udev;
-
 use crate::error::*;
 use crate::*;
 
@@ -21,7 +19,7 @@ pub struct FakeDevice {
 
 
 impl FakeDevice {
-    fn open<P: AsRef<Path>>(path: P) -> Res<Self>{
+    fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
         Ok(FakeDevice {
             fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::empty()).unwrap(),
             def: unsafe { mem::zeroed() },
@@ -58,6 +56,16 @@ impl FakeDevice {
             .clone_from_slice(unsafe { mem::transmute(bytes) });
     }
 
+    fn create(&self) {
+        unsafe {
+            let ptr = &self.def as *const _ as *const u8;
+            let size = mem::size_of_val(&self.def);
+
+            unistd::write(self.fd, slice::from_raw_parts(ptr, size)).unwrap();
+            Errno::result(ui_dev_create(self.fd)).unwrap();
+        }
+    }
+
     fn register_all(&self) {
         for code in 1..127 {
             self.register_key(code);
@@ -82,16 +90,6 @@ impl FakeDevice {
         unsafe {
             Errno::result(ui_set_evbit(self.fd, EV_REL)).unwrap();
             Errno::result(ui_set_relbit(self.fd, code)).unwrap();
-        }
-    }
-
-    fn create(&self) {
-        unsafe {
-            let ptr = &self.def as *const _ as *const u8;
-            let size = mem::size_of_val(&self.def);
-
-            unistd::write(self.fd, slice::from_raw_parts(ptr, size)).unwrap();
-            Errno::result(ui_dev_create(self.fd)).unwrap();
         }
     }
 

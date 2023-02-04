@@ -1,7 +1,7 @@
-extern crate uinput_simple;
+extern crate uinput;
 
-use uinput_simple::FakeDevice;
-use uinput_simple::events::*;
+use uinput::FakeDevice;
+use uinput::events::*;
 use std::thread;
 use std::time::Duration;
 

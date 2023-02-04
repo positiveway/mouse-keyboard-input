@@ -2,8 +2,6 @@ use std::fmt;
 use std::error;
 use std::ffi;
 use nix;
-extern crate libudev as udev;
-
 
 /// UInput error.
 #[derive(Debug)]

@@ -1,9 +1,11 @@
 #[macro_use]
 extern crate ioctl_sys as ioctl;
+extern crate libc;
+extern crate libudev as udev;
+extern crate nix;
 
 use libc::{timeval};
 use std::mem;
-use ioctl_sys::ioctl;
 
 macro_rules! uin {
 	(write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => (
