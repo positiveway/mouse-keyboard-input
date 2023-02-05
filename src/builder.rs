@@ -27,8 +27,7 @@ impl FakeDevice {
     }
 
     pub fn new() -> Self {
-        let context = udev::Context::new().unwrap();
-        let mut enumerator = udev::Enumerator::new(&context).unwrap();
+        let mut enumerator = udev::Enumerator::new().unwrap();
 
         enumerator.match_subsystem("misc").unwrap();
         enumerator.match_sysname("uinput").unwrap();

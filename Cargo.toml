@@ -9,4 +9,4 @@ keywords = ["linux", "input"]
 libc = "0.2"
 ioctl-sys = "0.8.0"
 nix = "0.26.2"
-libudev = "0.3.0"
+udev = "^0.7.0"

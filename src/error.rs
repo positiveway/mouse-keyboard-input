@@ -12,9 +12,6 @@ pub enum Error {
 	/// Errors with internal nulls in names.
 	Nul(ffi::NulError),
 
-	/// Errors coming from udev.
-	Udev(udev::Error),
-
 	/// The uinput file could not be found.
 	NotFound,
 }
@@ -31,12 +28,6 @@ impl From<nix::Error> for Error {
 	}
 }
 
-impl From<udev::Error> for Error {
-	fn from(value: udev::Error) -> Self {
-		Error::Udev(value)
-	}
-}
-
 impl fmt::Display for Error {
 	fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
 		f.write_str(error::Error::description(self))
@@ -50,9 +41,6 @@ impl error::Error for Error {
 				err.description(),
 
 			&Error::Nul(ref err) =>
-				err.description(),
-
-			&Error::Udev(ref err) =>
 				err.description(),
 
 			&Error::NotFound =>

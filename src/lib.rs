@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate ioctl_sys as ioctl;
 extern crate libc;
-extern crate libudev as udev;
+extern crate udev;
 extern crate nix;
 
 use libc::{timeval};
