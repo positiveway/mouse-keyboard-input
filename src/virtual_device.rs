@@ -121,7 +121,7 @@ impl VirtualDevice {
     }
 
     pub fn scroll_vertical(&mut self, value: i32) -> Res<()> {
-        self.write(EV_REL, REL_WHEEL, value)?;
+        self.write(EV_REL, REL_WHEEL, -value)?;
         self.synchronize()
     }
 
