@@ -90,9 +90,9 @@ ioctl!(read ui_get_version with b'U', 45; u32);
 
 pub mod events;
 
-mod builder;
+mod virtual_device;
 
-pub use builder::FakeDevice;
+pub use virtual_device::VirtualDevice;
 
 mod error;
 

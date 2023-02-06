@@ -12,15 +12,15 @@ use crate::*;
 pub type Res<T> = Result<T, Error>;
 
 
-pub struct FakeDevice {
+pub struct VirtualDevice {
     fd: i32,
     def: uinput_user_dev,
 }
 
 
-impl FakeDevice {
+impl VirtualDevice {
     fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
-        Ok(FakeDevice {
+        Ok(VirtualDevice {
             fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::empty()).unwrap(),
             def: unsafe { mem::zeroed() },
         })
@@ -37,16 +37,15 @@ impl FakeDevice {
 
         let path = device.devnode().unwrap();
 
-        let mut fake_device = FakeDevice::open(path).unwrap();
+        let mut virtual_device = VirtualDevice::open(path).unwrap();
 
-        fake_device.set_name("testdevice");
-        fake_device.register_all();
-        fake_device.create();
+        virtual_device.set_name("virtualdevice");
+        virtual_device.register_all();
+        virtual_device.create();
 
-        return fake_device;
+        return virtual_device;
     }
 
-    /// Set the name.
     fn set_name<T: AsRef<str>>(&mut self, value: T) {
         let string = CString::new(value.as_ref()).unwrap();
         let bytes = string.as_bytes_with_nul();
@@ -116,20 +115,39 @@ impl FakeDevice {
         self.write(EV_SYN, SYN_REPORT, 0)
     }
 
-    pub fn move_mouse_or_wheel(&mut self, code: i32, value: i32) -> Res<()> {
-        self.write(EV_REL, code, value)
+    pub fn move_mouse(&mut self, x: i32, y: i32) -> Res<()> {
+        self.write(EV_REL, REL_X, x)?;
+        self.write(EV_REL, REL_Y, y)?;
+        self.synchronize()
+    }
+
+    pub fn scroll_vertical(&mut self, value: i32) -> Res<()> {
+        self.write(EV_REL, REL_WHEEL, value)?;
+        self.synchronize()
+    }
+
+    pub fn scroll_horizontal(&mut self, value: i32) -> Res<()> {
+        self.write(EV_REL, REL_HWHEEL, value)?;
+        self.synchronize()
     }
 
     pub fn press(&mut self, button: i32) -> Res<()> {
-        self.write(EV_KEY, button, 1)
+        self.write(EV_KEY, button, 1)?;
+        self.synchronize()
     }
 
     pub fn release(&mut self, button: i32) -> Res<()> {
-        self.write(EV_KEY, button, 0)
+        self.write(EV_KEY, button, 0)?;
+        self.synchronize()
+    }
+
+    pub fn click(&mut self, button: i32) -> Res<()> {
+        self.press(button)?;
+        self.release(button)
     }
 }
 
-impl Drop for FakeDevice {
+impl Drop for VirtualDevice {
     fn drop(&mut self) {
         unsafe {
             ui_dev_destroy(self.fd);
