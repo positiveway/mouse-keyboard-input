@@ -2,7 +2,7 @@ use std::path::Path;
 use std::{mem, ptr, slice};
 use libc::{timeval, gettimeofday};
 use std::ffi::CString;
-use nix::{self, fcntl, unistd};
+use nix::{fcntl, unistd};
 use nix::errno::Errno;
 use nix::sys::stat;
 
