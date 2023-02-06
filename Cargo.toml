@@ -7,6 +7,7 @@ description = "Send mouse and keyboard events on any distro and X11 or Wayland"
 keywords = ["linux", "input", "mouse", "keyboard", "control"]
 readme = "README.md"
 license = "MIT OR Apache-2.0"
+
 repository = "https://github.com/positiveway/mouse-keyboard-input"
 
 [dependencies]
