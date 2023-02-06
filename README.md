@@ -1,6 +1,6 @@
-Easy to use `uinput` wrapper for Rust
+Easy to use `uinput` wrapper for Rust.
 
-Allows you to send keyboard and mouse events by creating virtual device in Linux
+Allows you to send keyboard and mouse events by creating virtual device in Linux.
 
 `uinput` is basic Linux library, so this works on any distro and on `X11` or `Wayland`.
 
