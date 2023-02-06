@@ -13,9 +13,9 @@ fn main() {
 
         // scroll vertically by 100
         device.scroll_vertical(100).unwrap();
-        // move cursor vertically from current position by 50
+        // move cursor vertically from the current position by 50
         device.move_mouse(50, 50).unwrap();
-        //click left mouse button
+        //click the left mouse button
         device.click(BTN_LEFT).unwrap();
     }
 }

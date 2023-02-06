@@ -1,16 +1,16 @@
 Easy to use `uinput` wrapper for Rust.
 
-Allows you to send keyboard and mouse events by creating virtual device in Linux.
+Allows you to send keyboard and mouse events by creating a virtual device in Linux.
 
-`uinput` is basic Linux library, so this works on any distro and on `X11` or `Wayland`.
+`uinput` is a basic Linux library, so this works on any distro and on `X11` or `Wayland`.
 
-High resolution events are sent for mouse wheel allowing smoother scrolling and better precision.
+High-resolution events are sent for the mouse wheel, allowing smoother scrolling and better precision.
 
 Lib is safe by design, resources are released automatically when `VirtualDevice`'s destructor is called. Dependencies are up-to-date in contrast to other `uinput` libs for Rust.
 
 
 ## Installation
-To use it without `sudo` add current user to input group (replace `user` with your username):
+To use it without `sudo` add the current user to input group (replace `user` with your username):
 ```
 sudo usermod -a -G input user
 sudo reboot
@@ -81,9 +81,9 @@ fn main() {
 
         // scroll vertically by 100
         device.scroll_vertical(100).unwrap();
-        // move cursor vertically from current position by 50
+        // move cursor vertically the from current position by 50
         device.move_mouse(50, 50).unwrap();
-        //click left mouse button
+        //click the left mouse button
         device.click(BTN_LEFT).unwrap();
     }
 }
