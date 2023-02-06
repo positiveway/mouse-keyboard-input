@@ -25,11 +25,11 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-uinput = "0.2.0"
+mouse-keyboard-input = "0.2.0"
 ```
 To use the latest development version:
 ```
-uinput = { git = "https://github.com/positiveway/mouse-keyboard-input", branch = "main" }
+mouse-keyboard-input = { git = "https://github.com/positiveway/mouse-keyboard-input", branch = "main" }
 ```
 
 
@@ -66,10 +66,10 @@ KEY_LEFTMETA (Meta means Windows button on Linux)
 ### Code examples
 #### Mouse
 ```
-extern crate uinput;
+extern crate mouse_keyboard_input;
 
-use uinput::VirtualDevice;
-use uinput::key_codes::*;
+use mouse_keyboard_input::VirtualDevice;
+use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
@@ -90,10 +90,10 @@ fn main() {
 ```
 #### Keyboard
 ```
-extern crate uinput;
+extern crate mouse_keyboard_input;
 
-use uinput::VirtualDevice;
-use uinput::key_codes::*;
+use mouse_keyboard_input::VirtualDevice;
+use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 

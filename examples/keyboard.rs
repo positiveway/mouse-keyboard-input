@@ -1,7 +1,7 @@
-extern crate uinput;
+extern crate mouse_keyboard_input;
 
-use uinput::VirtualDevice;
-use uinput::key_codes::*;
+use mouse_keyboard_input::VirtualDevice;
+use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 

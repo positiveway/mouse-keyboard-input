@@ -1,5 +1,5 @@
 [package]
-name = "uinput"
+name = "mouse-keyboard-input"
 version = "0.2.0"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 
