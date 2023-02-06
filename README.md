@@ -29,7 +29,7 @@ uinput = "0.2.0"
 ```
 To use the latest development version:
 ```
-uinput = { git = "https://github.com/positiveway/uinput-rs", branch = "master" }
+uinput = { git = "https://github.com/positiveway/mouse-keyboard-input", branch = "main" }
 ```
 
 
@@ -54,7 +54,7 @@ BTN_MIDDLE - middle mouse button
 ```
 
 #### Keyboard
-Key codes can be found in [/src/key_codes.rs](https://github.com/positiveway/uinput-rs/blob/master/src/key_codes.rs)
+Key codes can be found in [/src/key_codes.rs](https://github.com/positiveway/mouse-keyboard-input/blob/main/src/key_codes.rs)
 
 Example:
 ```

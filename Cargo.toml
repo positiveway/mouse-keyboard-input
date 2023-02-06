@@ -4,9 +4,9 @@ version = "0.2.0"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 
 description = "Send mouse and keyboard events on any distro and X11 or Wayland"
-keywords = ["linux", "input", "mouse", "keyboard", "control"]
+keywords = ["linux", "input", "mouse", "keyboard", "control", "uinput"]
 readme = "README.md"
-repository = "https://github.com/positiveway/uinput-rs"
+repository = "https://github.com/positiveway/mouse-keyboard-input"
 
 [dependencies]
 libc = "0.2"
