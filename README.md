@@ -36,12 +36,13 @@ uinput = { git = "https://github.com/positiveway/uinput-rs", branch = "master" }
 ## How to use
 ### Functions
 ```
-click(button) - click mouse button or type a key
+click(button_or_key) - click mouse button or type a key
+press(button_or_key)
+release(button_or_key)
 
 move_mouse(x, y)
 
 scroll_vertical(value)
-
 scroll_horizontal(value)
 ```
 ### List of buttons
