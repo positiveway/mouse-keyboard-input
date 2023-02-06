@@ -6,7 +6,6 @@ use nix::{self, fcntl, unistd};
 use nix::errno::Errno;
 use nix::sys::stat;
 
-use crate::error::*;
 use crate::*;
 
 pub type Res<T> = Result<T, Error>;

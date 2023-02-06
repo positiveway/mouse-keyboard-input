@@ -1,7 +1,7 @@
 extern crate uinput;
 
 use uinput::VirtualDevice;
-use uinput::events::*;
+use uinput::key_codes::*;
 use std::thread;
 use std::time::Duration;
 

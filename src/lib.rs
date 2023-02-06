@@ -15,7 +15,18 @@ macro_rules! uin {
 	);
 }
 
-pub use crate::events::*;
+
+pub mod key_codes;
+
+pub use crate::key_codes::*;
+
+mod virtual_device;
+
+pub use virtual_device::VirtualDevice;
+
+mod error;
+
+pub use error::Error;
 
 pub const UINPUT_MAX_NAME_SIZE: i32 = 80;
 
@@ -87,14 +98,3 @@ uin!(write ui_set_propbit with b'U', 110; i32);
 //ioctl!(readwrite ui_end_ff_erase with b'U', 201, uinput_ff_erase);
 
 ioctl!(read ui_get_version with b'U', 45; u32);
-
-pub mod events;
-
-mod virtual_device;
-
-pub use virtual_device::VirtualDevice;
-
-mod error;
-
-pub use error::Error;
-

@@ -54,7 +54,7 @@ BTN_MIDDLE - middle mouse button
 ```
 
 #### Keyboard
-Key codes can be found in `/src/events.rs`
+Key codes can be found in [/src/key_codes.rs](https://github.com/positiveway/uinput-rs/blob/master/src/key_codes.rs)
 
 Example:
 ```
@@ -69,7 +69,7 @@ KEY_LEFTMETA (Meta means Windows button on Linux)
 extern crate uinput;
 
 use uinput::VirtualDevice;
-use uinput::events::*;
+use uinput::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
@@ -93,7 +93,7 @@ fn main() {
 extern crate uinput;
 
 use uinput::VirtualDevice;
-use uinput::events::*;
+use uinput::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
