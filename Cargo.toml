@@ -3,8 +3,8 @@ name = "uinput"
 version = "0.2.0"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 
-description = "Easy to use Linux uinput wrapper"
-keywords = ["linux", "input"]
+description = "Send mouse and keyboard events on any distro and X11 or Wayland"
+keywords = ["linux", "input", "mouse", "keyboard", "control"]
 readme = "README.md"
 repository = "https://github.com/positiveway/uinput-rs"
 
