@@ -40,7 +40,7 @@ pub struct input_event {
     pub value: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct input_id {
     pub bustype: u16,
@@ -49,6 +49,7 @@ pub struct input_id {
     pub version: u16,
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct uinput_user_dev {
     pub name: [i8; UINPUT_MAX_NAME_SIZE as usize],
