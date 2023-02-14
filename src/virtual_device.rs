@@ -20,6 +20,8 @@ pub struct VirtualDevice {
 
 const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
+const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
+
 impl VirtualDevice {
     pub fn new() -> Self {
         let path = Path::new("/dev/uinput");
@@ -156,7 +158,7 @@ impl VirtualDevice {
     }
 
     pub fn release(&mut self, button: u16) -> Res<()> {
-        thread::sleep(Duration::from_millis(5));
+        thread::sleep(SLEEP_BEFORE_RELEASE);
 
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
