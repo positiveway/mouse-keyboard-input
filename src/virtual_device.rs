@@ -2,6 +2,9 @@ use std::path::Path;
 use std::{mem, ptr, slice};
 use libc::{timeval, gettimeofday};
 use std::ffi::CString;
+use std::fs::File;
+use std::io::Write;
+use std::os::fd::AsRawFd;
 use nix::{fcntl, unistd};
 use nix::errno::Errno;
 use nix::sys::stat;
@@ -12,14 +15,31 @@ pub type Res<T> = Result<T, Error>;
 
 
 pub struct VirtualDevice {
-    fd: i32,
+    file: File,
     def: uinput_user_dev,
 }
 
 const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
 impl VirtualDevice {
-    fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
+    pub fn new() -> Self {
+        let path = Path::new("/dev/uinput");
+
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path).unwrap();
+
+        use std::os::unix::fs::PermissionsExt;
+
+        let metadata = file.metadata().unwrap();
+        let mut permissions = metadata.permissions();
+        permissions.set_mode(0o660);
+
         // let usb_device = input_id {
         //     bustype: 0x03,
         //     vendor: 0x4711,
@@ -29,16 +49,10 @@ impl VirtualDevice {
         // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         // def.id = usb_device;
 
-        Ok(VirtualDevice {
-            fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR | stat::Mode::S_IRGRP | stat::Mode::S_IWGRP).unwrap(),
+        let mut virtual_device = VirtualDevice {
+            file,
             def: unsafe { mem::zeroed() },
-        })
-    }
-
-    pub fn new() -> Self {
-        let path = Path::new("/dev/uinput");
-
-        let mut virtual_device = VirtualDevice::open(path).unwrap();
+        };
 
         virtual_device.set_name("virtualdevice");
         virtual_device.register_all();
@@ -55,13 +69,14 @@ impl VirtualDevice {
             .clone_from_slice(unsafe { mem::transmute(bytes) });
     }
 
-    fn create(&self) {
+    fn create(&mut self) {
         unsafe {
             let ptr = &self.def as *const _ as *const u8;
             let size = mem::size_of_val(&self.def);
 
-            unistd::write(self.fd, slice::from_raw_parts(ptr, size)).unwrap();
-            Errno::result(ui_dev_create(self.fd)).unwrap();
+            self.file.write_all(slice::from_raw_parts(ptr, size)).unwrap();
+
+            Errno::result(ui_dev_create(self.file.as_raw_fd())).unwrap();
         }
     }
 
@@ -80,15 +95,15 @@ impl VirtualDevice {
 
     fn register_key(&self, code: u16) {
         unsafe {
-            Errno::result(ui_set_evbit(self.fd, EV_KEY as i32)).unwrap();
-            Errno::result(ui_set_keybit(self.fd, code as i32)).unwrap();
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32)).unwrap();
+            Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32)).unwrap();
         }
     }
 
     fn register_relative(&self, code: u16) {
         unsafe {
-            Errno::result(ui_set_evbit(self.fd, EV_REL as i32)).unwrap();
-            Errno::result(ui_set_relbit(self.fd, code as i32)).unwrap();
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32)).unwrap();
+            Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32)).unwrap();
         }
     }
 
@@ -106,9 +121,8 @@ impl VirtualDevice {
             let ptr = &event as *const _ as *const u8;
             let size = mem::size_of_val(&event);
 
-            unistd::write(self.fd, slice::from_raw_parts(ptr, size))?;
+            self.file.write_all(slice::from_raw_parts(ptr, size)).unwrap();
         }
-
         Ok(())
     }
 
@@ -151,7 +165,7 @@ impl VirtualDevice {
 impl Drop for VirtualDevice {
     fn drop(&mut self) {
         unsafe {
-            ui_dev_destroy(self.fd);
+            ui_dev_destroy(self.file.as_raw_fd());
         }
     }
 }
