@@ -1,13 +1,10 @@
 use std::path::Path;
 use std::{mem, ptr, slice};
-use libc::{timeval, gettimeofday};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use nix::{fcntl, unistd};
 use nix::errno::Errno;
-use nix::sys::stat;
 
 use crate::*;
 

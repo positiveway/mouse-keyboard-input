@@ -3,7 +3,7 @@ extern crate ioctl_sys as ioctl;
 extern crate libc;
 extern crate nix;
 
-use libc::{timeval};
+use libc::timeval;
 use std::mem;
 
 macro_rules! uin {
