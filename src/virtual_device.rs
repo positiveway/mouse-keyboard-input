@@ -16,6 +16,7 @@ pub struct VirtualDevice {
     def: uinput_user_dev,
 }
 
+const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
 impl VirtualDevice {
     fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
@@ -77,30 +78,30 @@ impl VirtualDevice {
         }
     }
 
-    fn register_key(&self, code: i32) {
+    fn register_key(&self, code: u16) {
         unsafe {
-            Errno::result(ui_set_evbit(self.fd, EV_KEY)).unwrap();
-            Errno::result(ui_set_keybit(self.fd, code)).unwrap();
+            Errno::result(ui_set_evbit(self.fd, EV_KEY as i32)).unwrap();
+            Errno::result(ui_set_keybit(self.fd, code as i32)).unwrap();
         }
     }
 
-    fn register_relative(&self, code: i32) {
+    fn register_relative(&self, code: u16) {
         unsafe {
-            Errno::result(ui_set_evbit(self.fd, EV_REL)).unwrap();
-            Errno::result(ui_set_relbit(self.fd, code)).unwrap();
+            Errno::result(ui_set_evbit(self.fd, EV_REL as i32)).unwrap();
+            Errno::result(ui_set_relbit(self.fd, code as i32)).unwrap();
         }
     }
 
-    fn write(&mut self, kind: i32, code: i32, value: i32) -> Res<()> {
+    fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
         unsafe {
             let mut event = input_event {
-                time: timeval { tv_sec: 0, tv_usec: 0 },
-                kind: kind as u16,
-                code: code as u16,
-                value: value as i32,
+                time: FIXED_TIME,
+                kind,
+                code,
+                value,
             };
 
-            gettimeofday(&mut event.time, ptr::null_mut());
+            // gettimeofday(&mut event.time, ptr::null_mut());
 
             let ptr = &event as *const _ as *const u8;
             let size = mem::size_of_val(&event);
@@ -131,17 +132,17 @@ impl VirtualDevice {
         self.synchronize()
     }
 
-    pub fn press(&mut self, button: i32) -> Res<()> {
+    pub fn press(&mut self, button: u16) -> Res<()> {
         self.write(EV_KEY, button, 1)?;
         self.synchronize()
     }
 
-    pub fn release(&mut self, button: i32) -> Res<()> {
+    pub fn release(&mut self, button: u16) -> Res<()> {
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
     }
 
-    pub fn click(&mut self, button: i32) -> Res<()> {
+    pub fn click(&mut self, button: u16) -> Res<()> {
         self.press(button)?;
         self.release(button)
     }

@@ -13,5 +13,6 @@ fn main() {
     // type hello
     for key in [KEY_H, KEY_E, KEY_L, KEY_L, KEY_O] {
         device.click(key).unwrap();
+        thread::sleep(Duration::from_millis(5));
     }
 }
