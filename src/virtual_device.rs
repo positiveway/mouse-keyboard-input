@@ -20,7 +20,7 @@ pub struct VirtualDevice {
 impl VirtualDevice {
     fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
         Ok(VirtualDevice {
-            fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::empty()).unwrap(),
+            fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR | stat::Mode::S_IRGRP | stat::Mode::S_IWGRP).unwrap(),
             def: unsafe { mem::zeroed() },
         })
     }

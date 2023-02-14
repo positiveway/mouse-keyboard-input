@@ -1,6 +1,6 @@
 [package]
 name = "mouse-keyboard-input"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 
 description = "Send mouse and keyboard events on any distro and X11 or Wayland"
