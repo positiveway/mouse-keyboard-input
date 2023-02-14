@@ -1,9 +1,10 @@
 use std::path::Path;
-use std::{mem, ptr, slice};
+use std::{mem, ptr, slice, thread};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
+use std::time::Duration;
 use nix::errno::Errno;
 
 use crate::*;
@@ -155,6 +156,8 @@ impl VirtualDevice {
     }
 
     pub fn release(&mut self, button: u16) -> Res<()> {
+        thread::sleep(Duration::from_millis(5));
+
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
     }
