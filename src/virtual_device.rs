@@ -17,6 +17,7 @@ pub type Res<T> = Result<T, Error>;
 pub struct VirtualDevice {
     file: File,
     def: uinput_user_dev,
+    event: input_event,
 }
 
 const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
@@ -49,9 +50,17 @@ impl VirtualDevice {
         // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         // def.id = usb_device;
 
+        let mut event = input_event {
+            time: FIXED_TIME,
+            kind: 0,
+            code: 0,
+            value: 0,
+        };
+
         let mut virtual_device = VirtualDevice {
             file,
             def: unsafe { mem::zeroed() },
+            event,
         };
 
         virtual_device.set_name("virtualdevice");
@@ -108,18 +117,15 @@ impl VirtualDevice {
     }
 
     fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
-        unsafe {
-            let mut event = input_event {
-                time: FIXED_TIME,
-                kind,
-                code,
-                value,
-            };
+        self.event.kind = kind;
+        self.event.code = code;
+        self.event.value = value;
 
+        unsafe {
             // gettimeofday(&mut event.time, ptr::null_mut());
 
-            let ptr = &event as *const _ as *const u8;
-            let size = mem::size_of_val(&event);
+            let ptr = &self.event as *const _ as *const u8;
+            let size = mem::size_of_val(&self.event);
 
             self.file.write_all(slice::from_raw_parts(ptr, size)).unwrap();
         }

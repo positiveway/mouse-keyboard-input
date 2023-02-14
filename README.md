@@ -25,7 +25,7 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-mouse-keyboard-input = "0.2.0"
+mouse-keyboard-input = "0.3.0"
 ```
 To use the latest development version:
 ```
