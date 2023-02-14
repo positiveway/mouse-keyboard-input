@@ -19,31 +19,23 @@ pub struct VirtualDevice {
 
 impl VirtualDevice {
     fn open<P: AsRef<Path>>(path: P) -> Res<Self> {
-        let usb_device = input_id {
-            bustype: 0x03,
-            vendor: 0x4711,
-            product: 0x0816,
-            version: 1,
-        };
-        let mut def: uinput_user_dev = unsafe { mem::zeroed() };
-        def.id = usb_device;
+        // let usb_device = input_id {
+        //     bustype: 0x03,
+        //     vendor: 0x4711,
+        //     product: 0x0816,
+        //     version: 1,
+        // };
+        // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
+        // def.id = usb_device;
 
         Ok(VirtualDevice {
             fd: fcntl::open(path.as_ref(), fcntl::OFlag::O_WRONLY | fcntl::OFlag::O_NONBLOCK, stat::Mode::S_IRUSR | stat::Mode::S_IWUSR | stat::Mode::S_IRGRP | stat::Mode::S_IWGRP).unwrap(),
-            def,
+            def: unsafe { mem::zeroed() },
         })
     }
 
     pub fn new() -> Self {
-        let mut enumerator = udev::Enumerator::new().unwrap();
-
-        enumerator.match_subsystem("misc").unwrap();
-        enumerator.match_sysname("uinput").unwrap();
-
-        let device = enumerator.scan_devices().unwrap()
-            .next().unwrap();
-
-        let path = device.devnode().unwrap();
+        let path = Path::new("/dev/uinput");
 
         let mut virtual_device = VirtualDevice::open(path).unwrap();
 

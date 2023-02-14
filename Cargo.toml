@@ -1,6 +1,6 @@
 [package]
 name = "mouse-keyboard-input"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 
 description = "Send mouse and keyboard events on any distro and X11 or Wayland"
@@ -14,4 +14,3 @@ repository = "https://github.com/positiveway/mouse-keyboard-input"
 libc = "0.2"
 ioctl-sys = "0.8.0"
 nix = "0.26.2"
-udev = "^0.7.0"
