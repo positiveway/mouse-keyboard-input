@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::{mem, ptr, slice};
 use std::ffi::CString;
-use std::fmt::format;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
@@ -31,7 +30,7 @@ impl VirtualDevice {
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
 
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
@@ -52,7 +51,7 @@ impl VirtualDevice {
         // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         // def.id = usb_device;
 
-        let mut event = input_event {
+        let event = input_event {
             time: FIXED_TIME,
             kind: 0,
             code: 0,
