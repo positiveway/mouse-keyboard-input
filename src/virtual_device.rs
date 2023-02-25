@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::{mem, ptr, slice};
 use std::ffi::CString;
+use std::fmt::format;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use nix::errno::Errno;
 
 use crate::*;
@@ -64,7 +65,10 @@ impl VirtualDevice {
             event,
         };
 
-        virtual_device.set_name("virtualdevice");
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let device_name = format!("virtualdevice-{}", now.as_millis());
+
+        virtual_device.set_name(device_name.as_str());
         virtual_device.register_all();
         virtual_device.create();
 
