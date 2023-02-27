@@ -140,6 +140,16 @@ impl VirtualDevice {
         self.write(EV_SYN, SYN_REPORT, 0)
     }
 
+    pub fn move_mouse_x(&mut self, x: i32) -> Res<()> {
+        self.write(EV_REL, REL_X, x)?;
+        self.synchronize()
+    }
+
+    pub fn move_mouse_y(&mut self, y: i32) -> Res<()> {
+        self.write(EV_REL, REL_Y, y)?;
+        self.synchronize()
+    }
+
     pub fn move_mouse(&mut self, x: i32, y: i32) -> Res<()> {
         self.write(EV_REL, REL_X, x)?;
         self.write(EV_REL, REL_Y, y)?;
