@@ -120,7 +120,7 @@ impl VirtualDevice {
         }
     }
 
-    fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
+    pub fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
         self.event.kind = kind;
         self.event.code = code;
         self.event.value = value;
