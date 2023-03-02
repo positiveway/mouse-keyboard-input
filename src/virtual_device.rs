@@ -12,14 +12,13 @@ use crate::*;
 
 pub type Res<T> = Result<T, Error>;
 
-
 pub struct VirtualDevice {
     file: File,
     def: uinput_user_dev,
     event: input_event,
 }
 
-const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
+pub const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
@@ -118,6 +117,22 @@ impl VirtualDevice {
             Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32)).unwrap();
             Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32)).unwrap();
         }
+    }
+
+    pub fn write_buffer(&mut self, buffer: Vec<input_event>) -> Res<()> {
+        let mut converted = Vec::new();
+
+        for event in buffer.iter() {
+            unsafe {
+                let ptr = &event as *const _ as *const u8;
+                let size = mem::size_of_val(&event);
+                let content = slice::from_raw_parts(ptr, size);
+
+                converted.extend_from_slice(content);
+            }
+        }
+        self.file.write_all(converted.as_slice()).unwrap();
+        Ok(())
     }
 
     pub fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
