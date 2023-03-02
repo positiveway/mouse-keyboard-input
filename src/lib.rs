@@ -21,7 +21,7 @@ pub use crate::key_codes::*;
 
 mod virtual_device;
 
-pub use virtual_device::VirtualDevice;
+pub use virtual_device::{VirtualDevice, FIXED_TIME};
 
 mod error;
 
