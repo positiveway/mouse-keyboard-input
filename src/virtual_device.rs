@@ -131,7 +131,10 @@ impl VirtualDevice {
                 converted.extend_from_slice(content);
             }
         }
-        self.file.write_all(converted.as_slice()).unwrap();
+        let res = self.file.write_all(converted.as_slice());
+        if res.is_err() {
+            println!("error: {}", res.unwrap_err())
+        }
         Ok(())
     }
 
