@@ -21,7 +21,7 @@ pub use crate::key_codes::*;
 
 mod virtual_device;
 
-pub use virtual_device::{VirtualDevice, Button};
+pub use virtual_device::{VirtualDevice, Button, Coord};
 
 pub const UINPUT_MAX_NAME_SIZE: i32 = 80;
 

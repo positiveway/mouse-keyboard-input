@@ -14,6 +14,7 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type EmptyResult = Result<()>;
 
 pub type Button = u16;
+pub type Coord = i32;
 
 pub struct VirtualDevice {
     file: File,
@@ -161,9 +162,13 @@ impl VirtualDevice {
         self.buffer_add_release(button);
     }
 
-    pub fn buffer_add_mouse_move(&mut self, x: i32, y: i32) {
+    pub fn buffer_add_mouse_move(&mut self, x: Coord, y: Coord) {
         self.add_to_buffer(EV_REL, REL_X, x);
         self.add_to_buffer(EV_REL, REL_Y, y);
+    }
+
+    pub fn buffer_add_scroll_vertical(&mut self, value: Coord) {
+        self.add_to_buffer(EV_REL, REL_WHEEL, -value);
     }
 
     pub fn write_buffer_to_disk(&mut self) -> EmptyResult {
@@ -215,45 +220,45 @@ impl VirtualDevice {
         self.write(EV_SYN, SYN_REPORT, 0)
     }
 
-    pub fn move_mouse_x(&mut self, x: i32) -> EmptyResult {
+    pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.synchronize()
     }
 
-    pub fn move_mouse_y(&mut self, y: i32) -> EmptyResult {
+    pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
-    pub fn move_mouse(&mut self, x: i32, y: i32) -> EmptyResult {
+    pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
-    pub fn scroll_vertical(&mut self, value: i32) -> EmptyResult {
+    pub fn scroll_vertical(&mut self, value: Coord) -> EmptyResult {
         self.write(EV_REL, REL_WHEEL, -value)?;
         self.synchronize()
     }
 
-    pub fn scroll_horizontal(&mut self, value: i32) -> EmptyResult {
+    pub fn scroll_horizontal(&mut self, value: Coord) -> EmptyResult {
         self.write(EV_REL, REL_HWHEEL, value)?;
         self.synchronize()
     }
 
-    pub fn press(&mut self, button: u16) -> EmptyResult {
+    pub fn press(&mut self, button: Button) -> EmptyResult {
         self.write(EV_KEY, button, 1)?;
         self.synchronize()
     }
 
-    pub fn release(&mut self, button: u16) -> EmptyResult {
+    pub fn release(&mut self, button: Button) -> EmptyResult {
         sleep(SLEEP_BEFORE_RELEASE);
 
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
     }
 
-    pub fn click(&mut self, button: u16) -> EmptyResult {
+    pub fn click(&mut self, button: Button) -> EmptyResult {
         self.press(button)?;
         self.release(button)
     }
