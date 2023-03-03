@@ -119,22 +119,29 @@ impl VirtualDevice {
         }
     }
 
-    pub fn write_buffer(&mut self, buffer: Vec<input_event>) -> Res<()> {
+    pub fn write_buffer(&mut self, buffer: &[input_event]) -> Res<()> {
         let mut converted = Vec::new();
 
         for event in buffer.iter() {
+            self.event.kind = event.kind;
+            self.event.code = event.code;
+            self.event.value = event.value;
+
             unsafe {
-                let ptr = &event as *const _ as *const u8;
-                let size = mem::size_of_val(&event);
+                let ptr = &self.event as *const _ as *const u8;
+                let size = mem::size_of_val(&self.event);
                 let content = slice::from_raw_parts(ptr, size);
 
                 converted.extend_from_slice(content);
             }
         }
-        let res = self.file.write_all(converted.as_slice());
+        let conv = converted.as_slice();
+
+        let res = self.file.write_all(conv);
         if res.is_err() {
             println!("error: {}", res.unwrap_err())
         }
+
         Ok(())
     }
 
