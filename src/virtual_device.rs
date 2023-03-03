@@ -31,6 +31,7 @@ pub struct VirtualDevice {
 }
 
 const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
+const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
@@ -40,14 +41,9 @@ pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: ChannelSender) 
     Ok(())
 }
 
-fn send_syn(sender: ChannelSender) -> EmptyResult {
-    sender.send((EV_SYN, SYN_REPORT, 0))?;
-    Ok(())
-}
-
 pub fn send_press(button: Button, sender: ChannelSender) -> EmptyResult {
     sender.send((EV_KEY, button, 1))?;
-    send_syn(sender)?;
+    sender.send(SYN_PARAMS)?;
     Ok(())
 }
 
@@ -228,9 +224,39 @@ impl VirtualDevice {
         Ok(())
     }
 
+    pub fn write_events_from_channel_buffered(&mut self) -> EmptyResult {
+        let mut events_buffer = Vec::new();
+
+        for event in self.receiver.try_iter() {
+            events_buffer.push(event);
+        }
+        events_buffer.push(SYN_PARAMS);
+
+        let mut converted = Vec::new();
+
+        for event in events_buffer.iter() {
+            self.event.kind = event.0;
+            self.event.code = event.1;
+            self.event.value = event.2;
+
+            unsafe {
+                let ptr = &self.event as *const _ as *const u8;
+                let size = mem::size_of_val(&self.event);
+                let content = slice::from_raw_parts(ptr, size);
+
+                converted.extend_from_slice(content);
+            }
+        }
+        let conv = converted.as_slice();
+
+        self.file.write_all(conv)?;
+
+        Ok(())
+    }
+
     pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
-        self.sender.send((EV_SYN, SYN_REPORT, 0))?;
+        self.sender.send(SYN_PARAMS)?;
 
         for event in self.receiver.try_iter() {
             self.event.kind = event.0;
