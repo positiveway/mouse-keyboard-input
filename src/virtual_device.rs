@@ -10,20 +10,25 @@ use nix::errno::Errno;
 
 use crate::*;
 
-pub type Res<T> = Result<T, Error>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type EmptyResult = Result<()>;
+
+pub type Button = u16;
 
 pub struct VirtualDevice {
     file: File,
     def: uinput_user_dev,
     event: input_event,
+    buffer: Vec<u8>,
 }
 
-pub const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
+const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
+
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 impl VirtualDevice {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self> {
         let path = Path::new("/dev/uinput");
 
         use std::fs::OpenOptions;
@@ -33,11 +38,11 @@ impl VirtualDevice {
             .read(true)
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
-            .open(path).unwrap();
+            .open(path)?;
 
         use std::os::unix::fs::PermissionsExt;
 
-        let metadata = file.metadata().unwrap();
+        let metadata = file.metadata()?;
         let mut permissions = metadata.permissions();
         permissions.set_mode(0o660);
 
@@ -61,16 +66,17 @@ impl VirtualDevice {
             file,
             def: unsafe { mem::zeroed() },
             event,
+            buffer: Vec::new(),
         };
 
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
         let device_name = format!("virtualdevice-{}", now.as_millis());
 
         virtual_device.set_name(device_name.as_str());
-        virtual_device.register_all();
-        virtual_device.create();
+        virtual_device.register_all()?;
+        virtual_device.create()?;
 
-        return virtual_device;
+        Ok(virtual_device)
     }
 
     fn set_name<T: AsRef<str>>(&mut self, value: T) {
@@ -81,45 +87,93 @@ impl VirtualDevice {
             .clone_from_slice(unsafe { mem::transmute(bytes) });
     }
 
-    fn create(&mut self) {
+    fn create(&mut self) -> EmptyResult {
         unsafe {
             let ptr = &self.def as *const _ as *const u8;
             let size = mem::size_of_val(&self.def);
 
-            self.file.write_all(slice::from_raw_parts(ptr, size)).unwrap();
+            self.file.write_all(slice::from_raw_parts(ptr, size))?;
 
-            Errno::result(ui_dev_create(self.file.as_raw_fd())).unwrap();
+            Errno::result(ui_dev_create(self.file.as_raw_fd()))?;
         }
+        Ok(())
     }
 
-    fn register_all(&self) {
+    fn register_all(&self) -> EmptyResult {
         for code in 1..127 {
-            self.register_key(code);
+            self.register_key(code)?
         }
         for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
-            self.register_key(code);
+            self.register_key(code)?
         }
 
         for code in [REL_X, REL_Y, REL_HWHEEL, REL_WHEEL] {
-            self.register_relative(code);
+            self.register_relative(code)?
         }
+        Ok(())
     }
 
-    fn register_key(&self, code: u16) {
+    fn register_key(&self, code: u16) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32)).unwrap();
-            Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32)).unwrap();
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+            Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?;
         }
+        Ok(())
     }
 
-    fn register_relative(&self, code: u16) {
+    fn register_relative(&self, code: u16) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32)).unwrap();
-            Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32)).unwrap();
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+            Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?;
+        }
+        Ok(())
+    }
+
+    fn add_to_buffer(&mut self, kind: u16, code: u16, value: i32) {
+        self.event.kind = kind;
+        self.event.code = code;
+        self.event.value = value;
+
+        unsafe {
+            let ptr = &self.event as *const _ as *const u8;
+            let size = mem::size_of_val(&self.event);
+            let content = slice::from_raw_parts(ptr, size);
+
+            self.buffer.extend_from_slice(content);
         }
     }
 
-    pub fn write_buffer(&mut self, buffer: &[input_event]) -> Res<()> {
+    pub fn buffer_add_sync(&mut self) {
+        self.add_to_buffer(EV_SYN, SYN_REPORT, 0);
+    }
+
+    pub fn buffer_add_press(&mut self, button: Button) {
+        self.add_to_buffer(EV_KEY, button, 1);
+        self.buffer_add_sync();
+    }
+
+    pub fn buffer_add_release(&mut self, button: Button) {
+        self.add_to_buffer(EV_KEY, button, 0);
+    }
+
+    pub fn buffer_add_click(&mut self, button: Button) {
+        self.buffer_add_press(button);
+        self.buffer_add_release(button);
+    }
+
+    pub fn buffer_add_mouse_move(&mut self, x: i32, y: i32) {
+        self.add_to_buffer(EV_REL, REL_X, x);
+        self.add_to_buffer(EV_REL, REL_Y, y);
+    }
+
+    pub fn write_buffer_to_disk(&mut self) -> EmptyResult {
+        self.buffer_add_sync();
+        self.file.write_all(self.buffer.as_slice())?;
+        self.buffer.clear();
+        Ok(())
+    }
+
+    pub fn write_events_from_buffer(&mut self, buffer: &[input_event]) -> EmptyResult {
         let mut converted = Vec::new();
 
         for event in buffer.iter() {
@@ -137,15 +191,11 @@ impl VirtualDevice {
         }
         let conv = converted.as_slice();
 
-        let res = self.file.write_all(conv);
-        if res.is_err() {
-            println!("error: {}", res.unwrap_err())
-        }
-
+        self.file.write_all(conv)?;
         Ok(())
     }
 
-    pub fn write(&mut self, kind: u16, code: u16, value: i32) -> Res<()> {
+    fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
         self.event.kind = kind;
         self.event.code = code;
         self.event.value = value;
@@ -156,54 +206,54 @@ impl VirtualDevice {
             let ptr = &self.event as *const _ as *const u8;
             let size = mem::size_of_val(&self.event);
 
-            self.file.write_all(slice::from_raw_parts(ptr, size)).unwrap();
+            self.file.write_all(slice::from_raw_parts(ptr, size))?
         }
         Ok(())
     }
 
-    pub fn synchronize(&mut self) -> Res<()> {
+    pub fn synchronize(&mut self) -> EmptyResult {
         self.write(EV_SYN, SYN_REPORT, 0)
     }
 
-    pub fn move_mouse_x(&mut self, x: i32) -> Res<()> {
+    pub fn move_mouse_x(&mut self, x: i32) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.synchronize()
     }
 
-    pub fn move_mouse_y(&mut self, y: i32) -> Res<()> {
+    pub fn move_mouse_y(&mut self, y: i32) -> EmptyResult {
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
-    pub fn move_mouse(&mut self, x: i32, y: i32) -> Res<()> {
+    pub fn move_mouse(&mut self, x: i32, y: i32) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
-    pub fn scroll_vertical(&mut self, value: i32) -> Res<()> {
+    pub fn scroll_vertical(&mut self, value: i32) -> EmptyResult {
         self.write(EV_REL, REL_WHEEL, -value)?;
         self.synchronize()
     }
 
-    pub fn scroll_horizontal(&mut self, value: i32) -> Res<()> {
+    pub fn scroll_horizontal(&mut self, value: i32) -> EmptyResult {
         self.write(EV_REL, REL_HWHEEL, value)?;
         self.synchronize()
     }
 
-    pub fn press(&mut self, button: u16) -> Res<()> {
+    pub fn press(&mut self, button: u16) -> EmptyResult {
         self.write(EV_KEY, button, 1)?;
         self.synchronize()
     }
 
-    pub fn release(&mut self, button: u16) -> Res<()> {
+    pub fn release(&mut self, button: u16) -> EmptyResult {
         sleep(SLEEP_BEFORE_RELEASE);
 
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
     }
 
-    pub fn click(&mut self, button: u16) -> Res<()> {
+    pub fn click(&mut self, button: u16) -> EmptyResult {
         self.press(button)?;
         self.release(button)
     }

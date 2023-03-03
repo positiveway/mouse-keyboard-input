@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let mut device = VirtualDevice::new();
+    let mut device = VirtualDevice::new().unwrap();
 
     thread::sleep(Duration::from_secs(2));
 
