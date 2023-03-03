@@ -34,8 +34,36 @@ const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
+
 pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: ChannelSender) -> EmptyResult {
     sender.send((kind, code, value))?;
+    Ok(())
+}
+
+fn send_syn(sender: ChannelSender) -> EmptyResult {
+    sender.send((EV_SYN, SYN_REPORT, 0))?;
+    Ok(())
+}
+
+pub fn send_press(button: Button, sender: ChannelSender) -> EmptyResult {
+    sender.send((EV_KEY, button, 1))?;
+    send_syn(sender)?;
+    Ok(())
+}
+
+pub fn send_release(button: Button, sender: ChannelSender) -> EmptyResult {
+    sender.send((EV_KEY, button, 0))?;
+    Ok(())
+}
+
+pub fn send_mouse_move(x: Coord, y: Coord, sender: ChannelSender) -> EmptyResult {
+    sender.send((EV_REL, REL_X, x))?;
+    sender.send((EV_REL, REL_Y, y))?;
+    Ok(())
+}
+
+pub fn send_scroll_vertical(value: Coord, sender: ChannelSender) -> EmptyResult {
+    sender.send((EV_REL, REL_WHEEL, -value))?;
     Ok(())
 }
 
@@ -202,6 +230,7 @@ impl VirtualDevice {
 
     pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
+        self.sender.send((EV_SYN, SYN_REPORT, 0))?;
 
         for event in self.receiver.try_iter() {
             self.event.kind = event.0;
