@@ -26,7 +26,7 @@ pub struct VirtualDevice {
     def: uinput_user_dev,
     event: input_event,
     buffer: Vec<u8>,
-    sender: ChannelSender,
+    pub sender: ChannelSender,
     receiver: ChannelReceiver,
 }
 
