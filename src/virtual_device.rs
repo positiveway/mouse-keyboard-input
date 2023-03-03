@@ -71,21 +71,24 @@ impl VirtualDevice {
         };
 
         let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-        let device_name = format!("virtualdevice-{}", now.as_millis());
+        // let device_name = format!("virtualdevice-{}", now.as_millis());
+        let device_name = String::from("virtualdevice");
 
-        virtual_device.set_name(device_name.as_str());
+        virtual_device.set_name(device_name.as_str())?;
         virtual_device.register_all()?;
         virtual_device.create()?;
 
         Ok(virtual_device)
     }
 
-    fn set_name<T: AsRef<str>>(&mut self, value: T) {
-        let string = CString::new(value.as_ref()).unwrap();
+    fn set_name<T: AsRef<str>>(&mut self, value: T) -> EmptyResult {
+        let string = CString::new(value.as_ref())?;
         let bytes = string.as_bytes_with_nul();
 
         (&mut self.def.name)[..bytes.len()]
             .clone_from_slice(unsafe { mem::transmute(bytes) });
+
+        Ok(())
     }
 
     fn create(&mut self) -> EmptyResult {
