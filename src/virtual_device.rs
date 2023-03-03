@@ -7,6 +7,7 @@ use std::os::fd::AsRawFd;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 use nix::errno::Errno;
+use crossbeam_channel::{bounded, Sender, Receiver};
 
 use crate::*;
 
@@ -16,20 +17,33 @@ type EmptyResult = Result<()>;
 pub type Button = u16;
 pub type Coord = i32;
 
+pub type EventParams = (u16, u16, i32);
+pub type ChannelSender = Sender<EventParams>;
+type ChannelReceiver = Receiver<EventParams>;
+
 pub struct VirtualDevice {
     file: File,
     def: uinput_user_dev,
     event: input_event,
     buffer: Vec<u8>,
+    sender: ChannelSender,
+    receiver: ChannelReceiver,
 }
 
 const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
 
-
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
+pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: ChannelSender) -> EmptyResult {
+    sender.send((kind, code, value))?;
+    Ok(())
+}
+
 impl VirtualDevice {
-    pub fn new() -> Result<Self> {
+    pub fn default() -> Result<Self> {
+        VirtualDevice::new(50)
+    }
+    pub fn new(channel_size: usize) -> Result<Self> {
         let path = Path::new("/dev/uinput");
 
         use std::fs::OpenOptions;
@@ -63,15 +77,20 @@ impl VirtualDevice {
             value: 0,
         };
 
+        let (s, r) = bounded(channel_size);
+
         let mut virtual_device = VirtualDevice {
             file,
             def: unsafe { mem::zeroed() },
             event,
             buffer: Vec::new(),
+            sender: s,
+            receiver: r,
         };
 
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
+        // let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
         // let device_name = format!("virtualdevice-{}", now.as_millis());
+
         let device_name = String::from("virtualdevice");
 
         virtual_device.set_name(device_name.as_str())?;
@@ -181,13 +200,13 @@ impl VirtualDevice {
         Ok(())
     }
 
-    pub fn write_events_from_buffer(&mut self, buffer: &[input_event]) -> EmptyResult {
+    pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
 
-        for event in buffer.iter() {
-            self.event.kind = event.kind;
-            self.event.code = event.code;
-            self.event.value = event.value;
+        for event in self.receiver.try_iter() {
+            self.event.kind = event.0;
+            self.event.code = event.1;
+            self.event.value = event.2;
 
             unsafe {
                 let ptr = &self.event as *const _ as *const u8;

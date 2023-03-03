@@ -2,6 +2,7 @@
 extern crate ioctl_sys as ioctl;
 extern crate libc;
 extern crate nix;
+extern crate crossbeam_channel;
 
 use libc::timeval;
 use std::mem;
@@ -21,7 +22,7 @@ pub use crate::key_codes::*;
 
 mod virtual_device;
 
-pub use virtual_device::{VirtualDevice, Button, Coord};
+pub use virtual_device::{VirtualDevice, Button, Coord, EventParams, ChannelSender, send_to_channel};
 
 pub const UINPUT_MAX_NAME_SIZE: i32 = 80;
 
