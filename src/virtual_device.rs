@@ -176,84 +176,6 @@ impl VirtualDevice {
         Ok(())
     }
 
-    fn add_to_buffer(&mut self, kind: u16, code: u16, value: i32) {
-        self.event.kind = kind;
-        self.event.code = code;
-        self.event.value = value;
-
-        unsafe {
-            let ptr = &self.event as *const _ as *const u8;
-            let size = mem::size_of_val(&self.event);
-            let content = slice::from_raw_parts(ptr, size);
-
-            self.buffer.extend_from_slice(content);
-        }
-    }
-
-    pub fn buffer_add_sync(&mut self) {
-        self.add_to_buffer(EV_SYN, SYN_REPORT, 0);
-    }
-
-    pub fn buffer_add_press(&mut self, button: Button) {
-        self.add_to_buffer(EV_KEY, button, 1);
-        self.buffer_add_sync();
-    }
-
-    pub fn buffer_add_release(&mut self, button: Button) {
-        self.add_to_buffer(EV_KEY, button, 0);
-    }
-
-    pub fn buffer_add_click(&mut self, button: Button) {
-        self.buffer_add_press(button);
-        self.buffer_add_release(button);
-    }
-
-    pub fn buffer_add_mouse_move(&mut self, x: Coord, y: Coord) {
-        self.add_to_buffer(EV_REL, REL_X, x);
-        self.add_to_buffer(EV_REL, REL_Y, y);
-    }
-
-    pub fn buffer_add_scroll_vertical(&mut self, value: Coord) {
-        self.add_to_buffer(EV_REL, REL_WHEEL, -value);
-    }
-
-    pub fn write_buffer_to_disk(&mut self) -> EmptyResult {
-        self.buffer_add_sync();
-        self.file.write_all(self.buffer.as_slice())?;
-        self.buffer.clear();
-        Ok(())
-    }
-
-    pub fn write_events_from_channel_buffered(&mut self) -> EmptyResult {
-        let mut events_buffer = Vec::new();
-
-        for event in self.receiver.try_iter() {
-            events_buffer.push(event);
-        }
-        events_buffer.push(SYN_PARAMS);
-
-        let mut converted = Vec::new();
-
-        for event in events_buffer.iter() {
-            self.event.kind = event.0;
-            self.event.code = event.1;
-            self.event.value = event.2;
-
-            unsafe {
-                let ptr = &self.event as *const _ as *const u8;
-                let size = mem::size_of_val(&self.event);
-                let content = slice::from_raw_parts(ptr, size);
-
-                converted.extend_from_slice(content);
-            }
-        }
-        let conv = converted.as_slice();
-
-        self.file.write_all(conv)?;
-
-        Ok(())
-    }
-
     pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
         self.sender.send(SYN_PARAMS)?;
@@ -271,9 +193,8 @@ impl VirtualDevice {
                 converted.extend_from_slice(content);
             }
         }
-        let conv = converted.as_slice();
 
-        self.file.write_all(conv)?;
+        self.file.write_all(converted.as_slice())?;
         Ok(())
     }
 
