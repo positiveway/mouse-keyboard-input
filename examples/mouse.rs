@@ -12,7 +12,7 @@ fn main() {
         thread::sleep(Duration::from_secs(1));
 
         // scroll vertically by 100
-        device.scroll_vertical(100).unwrap();
+        device.scroll_y(100).unwrap();
         // move cursor vertically from the current position by 50
         device.move_mouse(50, 50).unwrap();
         //click the left mouse button

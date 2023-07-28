@@ -74,7 +74,13 @@ pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResul
 }
 
 #[inline]
-pub fn send_scroll_vertical(value: Coord, sender: &ChannelSender) -> EmptyResult {
+pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
+    sender.send((EV_REL, REL_HWHEEL, -value))?;
+    Ok(())
+}
+
+#[inline]
+pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_WHEEL, -value))?;
     Ok(())
 }
@@ -266,13 +272,13 @@ impl VirtualDevice {
         self.synchronize()
     }
 
-    pub fn scroll_vertical(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_WHEEL, -value)?;
+    pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_HWHEEL, value)?;
         self.synchronize()
     }
 
-    pub fn scroll_horizontal(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_HWHEEL, value)?;
+    pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_WHEEL, -value)?;
         self.synchronize()
     }
 
