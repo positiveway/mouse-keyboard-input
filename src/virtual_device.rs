@@ -1,11 +1,11 @@
 use std::path::Path;
-use std::{mem, ptr, slice};
+use std::{mem, ptr, slice, thread};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::thread::sleep;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use nix::errno::Errno;
 use crossbeam_channel::{bounded, Sender, Receiver};
 
@@ -22,10 +22,9 @@ pub type ChannelSender = Sender<EventParams>;
 type ChannelReceiver = Receiver<EventParams>;
 
 pub struct VirtualDevice {
+    writing_interval: Duration,
     file: File,
     def: uinput_user_dev,
-    event: input_event,
-    buffer: Vec<u8>,
     pub sender: ChannelSender,
     receiver: ChannelReceiver,
 }
@@ -36,38 +35,77 @@ const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 
-pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: ChannelSender) -> EmptyResult {
+#[inline]
+pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
     sender.send((kind, code, value))?;
     Ok(())
 }
 
-pub fn send_press(button: Button, sender: ChannelSender) -> EmptyResult {
+#[inline]
+pub fn send_press(button: Button, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_KEY, button, 1))?;
     sender.send(SYN_PARAMS)?;
     Ok(())
 }
 
-pub fn send_release(button: Button, sender: ChannelSender) -> EmptyResult {
+#[inline]
+pub fn send_release(button: Button, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_KEY, button, 0))?;
     Ok(())
 }
 
-pub fn send_mouse_move(x: Coord, y: Coord, sender: ChannelSender) -> EmptyResult {
+#[inline]
+pub fn send_mouse_move_x(x: Coord, sender: &ChannelSender) -> EmptyResult {
+    sender.send((EV_REL, REL_X, x))?;
+    Ok(())
+}
+
+#[inline]
+pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
+    sender.send((EV_REL, REL_Y, y))?;
+    Ok(())
+}
+
+#[inline]
+pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_X, x))?;
     sender.send((EV_REL, REL_Y, y))?;
     Ok(())
 }
 
-pub fn send_scroll_vertical(value: Coord, sender: ChannelSender) -> EmptyResult {
+#[inline]
+pub fn send_scroll_vertical(value: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_WHEEL, -value))?;
     Ok(())
 }
 
+#[inline]
+fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> &'static [u8] {
+    // gettimeofday(&mut event.time, ptr::null_mut());
+
+    let input_event = input_event {
+        time: FIXED_TIME,
+        kind,
+        code,
+        value,
+    };
+
+    unsafe {
+        let ptr = &input_event as *const _ as *const u8;
+        let size = mem::size_of_val(&input_event);
+        let content = slice::from_raw_parts(ptr, size);
+        content
+    }
+}
+
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
-        VirtualDevice::new(50)
+        VirtualDevice::new(
+            Duration::from_millis(1),
+            50,
+        )
     }
-    pub fn new(channel_size: usize) -> Result<Self> {
+    pub fn new(writing_interval: Duration, channel_size: usize) -> Result<Self> {
         let path = Path::new("/dev/uinput");
 
         use std::fs::OpenOptions;
@@ -94,20 +132,12 @@ impl VirtualDevice {
         // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         // def.id = usb_device;
 
-        let event = input_event {
-            time: FIXED_TIME,
-            kind: 0,
-            code: 0,
-            value: 0,
-        };
-
         let (s, r) = bounded(channel_size);
 
         let mut virtual_device = VirtualDevice {
+            writing_interval,
             file,
             def: unsafe { mem::zeroed() },
-            event,
-            buffer: Vec::new(),
             sender: s,
             receiver: r,
         };
@@ -176,22 +206,34 @@ impl VirtualDevice {
         Ok(())
     }
 
+    pub fn write_from_channel_every_ms(mut self) {
+        let writing_interval = self.writing_interval;
+
+        let scheduler = thread::spawn(move || {
+            loop {
+                let start = Instant::now();
+
+                self.write_events_from_channel().unwrap();
+
+                let runtime = start.elapsed();
+
+                if let Some(remaining) = writing_interval.checked_sub(runtime) {
+                    sleep(remaining);
+                }
+            }
+        });
+
+        scheduler.join().expect("Scheduler panicked");
+    }
+
+    #[inline]
     pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
         self.sender.send(SYN_PARAMS)?;
 
         for event in self.receiver.try_iter() {
-            self.event.kind = event.0;
-            self.event.code = event.1;
-            self.event.value = event.2;
-
-            unsafe {
-                let ptr = &self.event as *const _ as *const u8;
-                let size = mem::size_of_val(&self.event);
-                let content = slice::from_raw_parts(ptr, size);
-
-                converted.extend_from_slice(content);
-            }
+            let content = convert_event_for_writing(event.0, event.1, event.2);
+            converted.extend_from_slice(content);
         }
 
         self.file.write_all(converted.as_slice())?;
@@ -199,18 +241,8 @@ impl VirtualDevice {
     }
 
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
-        self.event.kind = kind;
-        self.event.code = code;
-        self.event.value = value;
-
-        unsafe {
-            // gettimeofday(&mut event.time, ptr::null_mut());
-
-            let ptr = &self.event as *const _ as *const u8;
-            let size = mem::size_of_val(&self.event);
-
-            self.file.write_all(slice::from_raw_parts(ptr, size))?
-        }
+        let content = convert_event_for_writing(kind, code, value);
+        self.file.write_all(content)?;
         Ok(())
     }
 
@@ -250,7 +282,7 @@ impl VirtualDevice {
     }
 
     pub fn release(&mut self, button: Button) -> EmptyResult {
-        sleep(SLEEP_BEFORE_RELEASE);
+        sleep(SLEEP_BEFORE_RELEASE); // required to preserve typing order
 
         self.write(EV_KEY, button, 0)?;
         self.synchronize()
