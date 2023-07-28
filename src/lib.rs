@@ -17,13 +17,10 @@ macro_rules! uin {
 
 
 pub mod key_codes;
-
-pub use crate::key_codes::*;
-
 mod virtual_device;
 
-pub use virtual_device::{VirtualDevice, Button, Coord, EventParams, ChannelSender, send_to_channel,
-                         send_press, send_release, send_mouse_move, send_scroll_vertical};
+pub use crate::key_codes::*;
+pub use virtual_device::*;
 
 pub const UINPUT_MAX_NAME_SIZE: i32 = 80;
 
