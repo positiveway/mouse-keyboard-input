@@ -11,8 +11,8 @@ use crossbeam_channel::{bounded, Sender, Receiver};
 
 use crate::*;
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-type EmptyResult = Result<()>;
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub type EmptyResult = Result<()>;
 
 pub type Button = u16;
 pub type Coord = i32;
