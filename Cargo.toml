@@ -2,6 +2,7 @@
 name = "mouse-keyboard-input"
 version = "0.3.7"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
+edition = "2021"
 
 description = "Send mouse and keyboard events on any distro and X11 or Wayland"
 keywords = ["linux", "input", "mouse", "keyboard", "control"]
