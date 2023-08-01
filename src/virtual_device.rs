@@ -35,57 +35,57 @@ const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 
-#[inline]
+//#[inline]
 pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
     sender.send((kind, code, value))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_press(button: Button, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_KEY, button, 1))?;
     sender.send(SYN_PARAMS)?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_release(button: Button, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_KEY, button, 0))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_mouse_move_x(x: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_X, x))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_Y, y))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_X, x))?;
     sender.send((EV_REL, REL_Y, y))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_HWHEEL, -value))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
     sender.send((EV_REL, REL_WHEEL, -value))?;
     Ok(())
 }
 
-#[inline]
+//#[inline]
 fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> &'static [u8] {
     // gettimeofday(&mut event.time, ptr::null_mut());
 
@@ -232,7 +232,7 @@ impl VirtualDevice {
         scheduler.join().expect("Scheduler panicked");
     }
 
-    #[inline]
+    //#[inline]
     pub fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
         self.sender.send(SYN_PARAMS)?;
