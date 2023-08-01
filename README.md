@@ -109,5 +109,7 @@ fn main() {
 }
 ```
 
+### Sending events from multiple threads is also supported. See [/examples/channels.rs](https://github.com/positiveway/mouse-keyboard-input/blob/main/examples/channels.rs)
+
 ## Contributors
 Based on [github.com/meh/rust-uinput](https://github.com/meh/rust-uinput)
