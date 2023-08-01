@@ -4,10 +4,10 @@ use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use std::thread::sleep;
+use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant, SystemTime};
 use nix::errno::Errno;
-use crossbeam_channel::{bounded, Sender, Receiver};
+use crossbeam_channel::{Sender, Receiver, bounded};
 
 use crate::*;
 
@@ -36,57 +36,7 @@ const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 
 //#[inline]
-pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
-    sender.send((kind, code, value))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_press(button: Button, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_KEY, button, 1))?;
-    sender.send(SYN_PARAMS)?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_release(button: Button, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_KEY, button, 0))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_mouse_move_x(x: Coord, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_REL, REL_X, x))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_REL, REL_Y, y))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_REL, REL_X, x))?;
-    sender.send((EV_REL, REL_Y, y))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_REL, REL_HWHEEL, -value))?;
-    Ok(())
-}
-
-//#[inline]
-pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
-    sender.send((EV_REL, REL_WHEEL, -value))?;
-    Ok(())
-}
-
-//#[inline]
-fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> &'static [u8] {
+fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
     // gettimeofday(&mut event.time, ptr::null_mut());
 
     let input_event = input_event {
@@ -100,7 +50,7 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> &'static [u8] 
         let ptr = &input_event as *const _ as *const u8;
         let size = mem::size_of_val(&input_event);
         let content = slice::from_raw_parts(ptr, size);
-        content
+        content.to_vec()
     }
 }
 
@@ -212,10 +162,65 @@ impl VirtualDevice {
         Ok(())
     }
 
-    pub fn write_from_channel_every_ms(mut self) {
+    //#[inline]
+    pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
+        sender.send((kind, code, value))?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_press(button: Button, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_KEY, button, 1))?;
+        sender.send(SYN_PARAMS)?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_release(button: Button, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_KEY, button, 0))?;
+        Ok(())
+    }
+
+    pub fn send_click(button: Button, sender: &ChannelSender) -> EmptyResult {
+        VirtualDevice::send_press(button, sender)?;
+        VirtualDevice::send_release(button, sender)
+    }
+
+    //#[inline]
+    pub fn send_mouse_move_x(x: Coord, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_REL, REL_X, x))?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_REL, REL_Y, y))?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_REL, REL_X, x))?;
+        sender.send((EV_REL, REL_Y, y))?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_REL, REL_HWHEEL, -value))?;
+        Ok(())
+    }
+
+    //#[inline]
+    pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
+        sender.send((EV_REL, REL_WHEEL, -value))?;
+        Ok(())
+    }
+
+    pub fn flush_channel_every_interval(mut self) -> JoinHandle<()> {
         let writing_interval = self.writing_interval;
 
-        let scheduler = thread::spawn(move || {
+        thread::spawn(move || {
             loop {
                 let start = Instant::now();
 
@@ -227,19 +232,19 @@ impl VirtualDevice {
                     sleep(remaining);
                 }
             }
-        });
+        })
 
-        scheduler.join().expect("Scheduler panicked");
+        // scheduler.join().expect("Scheduler panicked");
     }
 
     //#[inline]
-    pub fn write_events_from_channel(&mut self) -> EmptyResult {
+    fn write_events_from_channel(&mut self) -> EmptyResult {
         let mut converted = Vec::new();
         self.sender.send(SYN_PARAMS)?;
 
         for event in self.receiver.try_iter() {
-            let content = convert_event_for_writing(event.0, event.1, event.2);
-            converted.extend_from_slice(content);
+            let mut content = convert_event_for_writing(event.0, event.1, event.2);
+            converted.append(&mut content);
         }
 
         self.file.write_all(converted.as_slice())?;
@@ -248,7 +253,7 @@ impl VirtualDevice {
 
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
         let content = convert_event_for_writing(kind, code, value);
-        self.file.write_all(content)?;
+        self.file.write_all(content.as_slice())?;
         Ok(())
     }
 
