@@ -11,6 +11,10 @@ license = "MIT OR Apache-2.0"
 
 repository = "https://github.com/positiveway/mouse-keyboard-input"
 
+[features]
+default=["auto-acquire-permissions"]
+auto-acquire-permissions=[]
+
 [dependencies]
 crossbeam-channel ="0.5"
 libc = "0.2"
