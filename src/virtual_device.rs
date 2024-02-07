@@ -73,11 +73,14 @@ impl VirtualDevice {
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
-        use std::os::unix::fs::PermissionsExt;
+        #[cfg(feature = "auto-acquire-permissions")]
+        {
+            use std::os::unix::fs::PermissionsExt;
 
-        let metadata = file.metadata()?;
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(0o660);
+            let metadata = file.metadata()?;
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o660);
+        }
 
         // let usb_device = input_id {
         //     bustype: 0x03,
