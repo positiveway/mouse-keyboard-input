@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::{mem, ptr, slice, thread};
+use std::{fs, mem, ptr, slice, thread};
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
@@ -54,6 +54,8 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
     }
 }
 
+const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
+
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
         VirtualDevice::new(
@@ -64,20 +66,21 @@ impl VirtualDevice {
     pub fn new(writing_interval: Duration, channel_size: usize) -> Result<Self> {
         let path = Path::new("/dev/uinput");
 
+        #[cfg(feature = "auto-acquire-permissions")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = fs::metadata(path).expect(UINPUT_NOT_LOADED_ERR);
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(0o660);
+        }
+
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
 
         let file = OpenOptions::new()
-            .read(true)
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
-
-        use std::os::unix::fs::PermissionsExt;
-
-        let metadata = file.metadata()?;
-        let mut permissions = metadata.permissions();
-        permissions.set_mode(0o660);
 
         // let usb_device = input_id {
         //     bustype: 0x03,
@@ -251,47 +254,56 @@ impl VirtualDevice {
         Ok(())
     }
 
+    #[inline(always)]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
         let content = convert_event_for_writing(kind, code, value);
         self.file.write_all(content.as_slice())?;
         Ok(())
     }
 
+    #[inline(always)]
     pub fn synchronize(&mut self) -> EmptyResult {
         self.write(EV_SYN, SYN_REPORT, 0)
     }
 
+    #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
         self.write(EV_REL, REL_Y, y)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
         self.write(EV_REL, REL_HWHEEL, value)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
         self.write(EV_REL, REL_WHEEL, -value)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn press(&mut self, button: Button) -> EmptyResult {
         self.write(EV_KEY, button, 1)?;
         self.synchronize()
     }
 
+    #[inline]
     pub fn release(&mut self, button: Button) -> EmptyResult {
         sleep(SLEEP_BEFORE_RELEASE); // required to preserve typing order
 
