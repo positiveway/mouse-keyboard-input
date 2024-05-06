@@ -7,6 +7,16 @@ extern crate crossbeam_channel;
 use libc::timeval;
 use std::mem;
 
+#[cfg(target_arch = "arm")]
+macro_rules! uin {
+	(write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => (
+		pub unsafe fn $name(fd: i32, val: $ty) -> i32 {
+            ioctl::ioctl(fd, (iow!($ioty, $nr, mem::size_of::<$ty>()) as u64).try_into().unwrap(), val)
+		}
+	);
+}
+
+#[cfg(not(target_arch = "arm"))]
 macro_rules! uin {
 	(write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => (
 		pub unsafe fn $name(fd: i32, val: $ty) -> i32 {

@@ -25,13 +25,29 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-mouse-keyboard-input = "0.5.2"
+mouse-keyboard-input = "0.6.1"
 ```
 To use the latest development version:
 ```
 mouse-keyboard-input = { git = "https://github.com/positiveway/mouse-keyboard-input", branch = "main" }
 ```
 
+#### armv7 build on linux
+Build script can be found in [/scripts/build_armv7.sh](https://github.com/positiveway/mouse-keyboard-input/blob/main/scripts/build_armv7.sh)
+```
+cd ./scripts
+sudo chmod +x ./build_armv7.sh #make script executable
+./build_armv7.sh
+```
+For this to work `arm-linux-gnueabi-gcc` needs to be installed
+
+For Ubuntu:
+```
+sudo apt install gcc-arm-linux-gnueabi
+```
+Reboot is required after installing the package
+
+For more details read [official discussion](https://github.com/rust-lang/cargo/issues/11212)
 
 ## How to use
 ### Functions
