@@ -316,6 +316,16 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_HWHEEL, value)
+    }
+
+    #[inline]
+    pub fn scroll_raw_y(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_WHEEL, value)
+    }
+
+    #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
         self.write(EV_REL, REL_HWHEEL, value)?;
         self.synchronize()
