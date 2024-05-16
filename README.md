@@ -25,7 +25,7 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-mouse-keyboard-input = "0.6.1"
+mouse-keyboard-input = "0.7.1"
 ```
 To use the latest development version:
 ```
@@ -95,8 +95,8 @@ fn main() {
     for _ in 1..5 {
         thread::sleep(Duration::from_secs(1));
 
-        // scroll vertically by 100
-        device.scroll_vertical(100).unwrap();
+        // scroll down by 100
+        device.scroll_vertical(-100).unwrap();
         // move cursor vertically the from current position by 50
         device.move_mouse(50, 50).unwrap();
         //click the left mouse button

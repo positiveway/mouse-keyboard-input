@@ -197,26 +197,26 @@ impl VirtualDevice {
 
     #[inline]
     pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_Y, y))?;
+        sender.send((EV_REL, REL_Y, -y))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
         sender.send((EV_REL, REL_X, x))?;
-        sender.send((EV_REL, REL_Y, y))?;
+        sender.send((EV_REL, REL_Y, -y))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_HWHEEL, -value))?;
+        sender.send((EV_REL, REL_HWHEEL, value))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_WHEEL, -value))?;
+        sender.send((EV_REL, REL_WHEEL, value))?;
         Ok(())
     }
 
@@ -274,14 +274,14 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_Y, y)?;
+        self.write(EV_REL, REL_Y, -y)?;
         self.synchronize()
     }
 
     #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
         self.write(EV_REL, REL_X, x)?;
-        self.write(EV_REL, REL_Y, y)?;
+        self.write(EV_REL, REL_Y, -y)?;
         self.synchronize()
     }
 
@@ -293,7 +293,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_WHEEL, -value)?;
+        self.write(EV_REL, REL_WHEEL, value)?;
         self.synchronize()
     }
 
