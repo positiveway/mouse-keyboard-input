@@ -12,6 +12,8 @@ use libc::gettimeofday;
 
 use crate::*;
 
+pub const UINPUT_MAX_NAME_SIZE: usize = 80;
+
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type EmptyResult = Result<()>;
 
@@ -83,29 +85,31 @@ impl VirtualDevice {
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
-        // let usb_device = input_id {
-        //     bustype: 0x03,
-        //     vendor: 0x4711,
-        //     product: 0x0816,
-        //     version: 1,
-        // };
-        // let mut def: uinput_user_dev = unsafe { mem::zeroed() };
-        // def.id = usb_device;
+        let mut def: uinput_user_dev = unsafe { mem::zeroed() };
+
+        let usb_device = input_id {
+            bustype: 0x03,
+            vendor: 0x4711,
+            product: 0x0816,
+            version: 1,
+        };
+        def.id = usb_device;
 
         let (s, r) = bounded(channel_size);
 
         let mut virtual_device = VirtualDevice {
             writing_interval,
             file,
-            def: unsafe { mem::zeroed() },
+            def,
             sender: s,
             receiver: r,
         };
 
-        // let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-        // let device_name = format!("virtualdevice-{}", now.as_millis());
+        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
+        let device_name = format!("virtualdevice-{}", now.as_millis());
+        // println!("{}", device_name);
 
-        let device_name = String::from("virtualdevice");
+        // let device_name = String::from("virtualdevice");
 
         virtual_device.set_name(device_name.as_str())?;
         virtual_device.register_all()?;
@@ -117,6 +121,14 @@ impl VirtualDevice {
     fn set_name<T: AsRef<str>>(&mut self, value: T) -> EmptyResult {
         let string = CString::new(value.as_ref())?;
         let bytes = string.as_bytes_with_nul();
+
+        if bytes.len() > UINPUT_MAX_NAME_SIZE {
+            return Err(Box::from(
+                format!(
+                    "Virtual device name is longer than maximum allowed size: {}.\nUse shorter name",
+                    UINPUT_MAX_NAME_SIZE
+                )));
+        }
 
         (&mut self.def.name)[..bytes.len()]
             .clone_from_slice(unsafe { mem::transmute(bytes) });
