@@ -8,6 +8,7 @@ use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant, SystemTime};
 use nix::errno::Errno;
 use crossbeam_channel::{Sender, Receiver, bounded};
+use libc::gettimeofday;
 
 use crate::*;
 
@@ -37,9 +38,7 @@ const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 #[inline]
 fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
-    // gettimeofday(&mut event.time, ptr::null_mut());
-
-    let input_event = input_event {
+    let mut input_event = input_event {
         time: FIXED_TIME,
         kind,
         code,
@@ -47,6 +46,8 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
     };
 
     unsafe {
+        // gettimeofday(&mut input_event.time, ptr::null_mut());
+
         let ptr = &input_event as *const _ as *const u8;
         let size = mem::size_of_val(&input_event);
         let content = slice::from_raw_parts(ptr, size);
@@ -264,6 +265,23 @@ impl VirtualDevice {
     #[inline(always)]
     pub fn synchronize(&mut self) -> EmptyResult {
         self.write(EV_SYN, SYN_REPORT, 0)
+    }
+
+    #[inline]
+    pub fn move_mouse_raw_x(&mut self, x: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_X, x)
+    }
+
+    #[inline]
+    pub fn move_mouse_raw_y(&mut self, y: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_Y, -y)
+    }
+
+    #[inline]
+    pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_X, x)?;
+        self.write(EV_REL, REL_Y, -y)?;
+        Ok(())
     }
 
     #[inline]
