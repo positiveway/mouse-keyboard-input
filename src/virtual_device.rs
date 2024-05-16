@@ -38,7 +38,7 @@ const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 
-#[inline]
+#[inline(always)]
 fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
     let mut input_event = input_event {
         time: FIXED_TIME,
@@ -259,18 +259,51 @@ impl VirtualDevice {
         self.sender.send(SYN_PARAMS)?;
 
         for event in self.receiver.try_iter() {
-            let mut content = convert_event_for_writing(event.0, event.1, event.2);
-            converted.append(&mut content);
+            // let mut content = convert_event_for_writing(event.0, event.1, event.2);
+            // converted.append(&mut content);
+
+            let mut input_event = input_event {
+                time: FIXED_TIME,
+                kind: event.0,
+                code: event.1,
+                value: event.2,
+            };
+
+            unsafe {
+                // gettimeofday(&mut input_event.time, ptr::null_mut());
+
+                let ptr = &input_event as *const _ as *const u8;
+                let size = mem::size_of_val(&input_event);
+                let content = slice::from_raw_parts(ptr, size);
+                converted.extend_from_slice(content);
+            }
         }
 
         self.file.write_all(converted.as_slice())?;
         Ok(())
     }
 
-    #[inline(always)]
+    #[inline]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
-        let content = convert_event_for_writing(kind, code, value);
-        self.file.write_all(content.as_slice())?;
+        // let content = convert_event_for_writing(kind, code, value);
+        // self.file.write(content.as_slice())?;
+
+        let mut input_event = input_event {
+            time: FIXED_TIME,
+            kind,
+            code,
+            value,
+        };
+
+        unsafe {
+            // gettimeofday(&mut input_event.time, ptr::null_mut());
+
+            let ptr = &input_event as *const _ as *const u8;
+            let size = mem::size_of_val(&input_event);
+            let content = slice::from_raw_parts(ptr, size);
+            self.file.write_all(content)?;
+        }
+
         Ok(())
     }
 
