@@ -286,7 +286,7 @@ impl VirtualDevice {
     #[inline]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
         // let content = convert_event_for_writing(kind, code, value);
-        // self.file.write(content.as_slice())?;
+        // self.file.write_all(content.as_slice())?;
 
         let mut input_event = input_event {
             time: FIXED_TIME,
