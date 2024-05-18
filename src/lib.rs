@@ -32,7 +32,7 @@ mod virtual_device;
 pub use crate::key_codes::*;
 pub use virtual_device::*;
 
-pub const UINPUT_MAX_NAME_SIZE: i32 = 80;
+pub const UINPUT_MAX_NAME_SIZE: usize = 80;
 
 
 #[derive(Clone, Copy)]

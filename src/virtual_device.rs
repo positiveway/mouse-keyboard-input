@@ -12,8 +12,6 @@ use libc::gettimeofday;
 
 use crate::*;
 
-pub const UINPUT_MAX_NAME_SIZE: usize = 80;
-
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type EmptyResult = Result<()>;
 
