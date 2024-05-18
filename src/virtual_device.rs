@@ -57,6 +57,13 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
     }
 }
 
+pub enum DeviceDefinitionType{
+    Separate,
+    MouseOnly,
+    KeyboardOnly,
+    None,
+}
+
 const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
 
 impl VirtualDevice {
@@ -64,9 +71,19 @@ impl VirtualDevice {
         VirtualDevice::new(
             Duration::from_millis(1),
             50,
+            DeviceDefinitionType::None,
         )
     }
-    pub fn new(writing_interval: Duration, channel_size: usize) -> Result<Self> {
+    // pub fn new(writing_interval: Duration, channel_size: usize, separate_devices: bool) -> Result<(Self, Self)> {
+    //     Ok((
+    //         Self::_new(writing_interval, channel_size, true)?,
+    //         Self::_new(writing_interval, channel_size, false)?,
+    //     ))
+    // }
+
+    fn new(writing_interval: Duration, channel_size: usize, definition_type: DeviceDefinitionType) -> Result<Self> {
+        let (s, r) = bounded(channel_size);
+
         let path = Path::new("/dev/uinput");
 
         #[cfg(feature = "auto-acquire-permissions")]
@@ -85,34 +102,58 @@ impl VirtualDevice {
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
-        let mut def: uinput_user_dev = unsafe { mem::zeroed() };
+        // Mouse:
+        // Bus=0003 Vendor=045e Product=07a5 Version=0111
+        // Keyboard:
+        // Bus=0011 Vendor=0001 Product=0001 Version=ab83
 
-        let usb_device = input_id {
-            bustype: 0x03,
-            vendor: 0x4711,
-            product: 0x0816,
-            version: 1,
-        };
-        def.id = usb_device;
+        let mut definition: uinput_user_dev = unsafe { mem::zeroed() };
+        let mut device_name: String;
 
-        let (s, r) = bounded(channel_size);
+        match definition_type {
+            DeviceDefinitionType::Separate => {
+                return Err(Box::from("Not implemented"));
+            }
+            DeviceDefinitionType::MouseOnly => {
+                definition.id = input_id {
+                    bustype: 0x0003,
+                    vendor: 0x045e,
+                    product: 0x07a5,
+                    version: 0x0111,
+                };
+                device_name = String::from("virtual-mouse");
+            }
+            DeviceDefinitionType::KeyboardOnly => {
+                definition.id = input_id {
+                    bustype: 0x0011,
+                    vendor: 0x0001,
+                    product: 0x0001,
+                    version: 0xab83,
+                };
+                device_name = String::from("virtual-keyboard");
+            }
+            DeviceDefinitionType::None => {
+                device_name = String::from("virtual-device");
+            }
+        }
 
         let mut virtual_device = VirtualDevice {
             writing_interval,
             file,
-            def,
+            def: definition,
             sender: s,
             receiver: r,
         };
 
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-        let device_name = format!("virtualdevice-{}", now.as_millis());
+        // let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
+        // let device_name = format!("virtualdevice-{}", now.as_millis());
         // println!("{}", device_name);
 
-        // let device_name = String::from("virtualdevice");
-
         virtual_device.set_name(device_name.as_str())?;
-        virtual_device.register_all()?;
+
+        virtual_device.register_mouse()?;
+        virtual_device.register_keyboard()?;
+
         virtual_device.create()?;
 
         Ok(virtual_device)
@@ -148,10 +189,14 @@ impl VirtualDevice {
         Ok(())
     }
 
-    fn register_all(&self) -> EmptyResult {
-        for code in 1..127 {
+    fn register_keyboard(&self) -> EmptyResult {
+        for code in 1..255 {
             self.register_key(code)?
         }
+        Ok(())
+    }
+
+    fn register_mouse(&self) -> EmptyResult {
         for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
             self.register_key(code)?
         }
@@ -159,6 +204,7 @@ impl VirtualDevice {
         for code in [REL_X, REL_Y, REL_HWHEEL, REL_WHEEL] {
             self.register_relative(code)?
         }
+
         Ok(())
     }
 
