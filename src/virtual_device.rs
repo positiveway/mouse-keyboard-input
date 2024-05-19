@@ -328,6 +328,31 @@ impl VirtualDevice {
     }
 
     #[inline]
+    fn write_batch(&mut self, batch: Vec<EventParams>) -> EmptyResult{
+        let mut converted = Vec::new();
+
+        for event in batch{
+            let mut input_event = input_event {
+                time: FIXED_TIME,
+                kind: event.0,
+                code: event.1,
+                value: event.2,
+            };
+
+            unsafe {
+                // gettimeofday(&mut input_event.time, ptr::null_mut());
+
+                let ptr = &input_event as *const _ as *const u8;
+                let size = mem::size_of_val(&input_event);
+                let content = slice::from_raw_parts(ptr, size);
+                converted.extend_from_slice(content);
+            }
+        }
+        self.file.write_all(converted.as_slice())?;
+        Ok(())
+    }
+
+    #[inline]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
         // let content = convert_event_for_writing(kind, code, value);
         // self.file.write_all(content.as_slice())?;
@@ -368,28 +393,35 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_X, x)?;
-        self.write(EV_REL, REL_Y, -y)?;
-        Ok(())
+        self.write_batch(vec![
+            (EV_REL, REL_X, x),
+            (EV_REL, REL_Y, -y),
+        ])
     }
 
     #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_X, x)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_REL, REL_X, x),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_Y, -y)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_REL, REL_Y, -y),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_X, x)?;
-        self.write(EV_REL, REL_Y, -y)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_REL, REL_X, x),
+            (EV_REL, REL_Y, -y),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
@@ -404,32 +436,39 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_HWHEEL, value)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_REL, REL_HWHEEL, value),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_WHEEL, value)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_REL, REL_WHEEL, value),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
     pub fn press(&mut self, button: Button) -> EmptyResult {
-        self.write(EV_KEY, button, 1)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_KEY, button, 1),
+            SYN_PARAMS
+        ])
     }
 
     #[inline]
     pub fn release(&mut self, button: Button) -> EmptyResult {
-        sleep(SLEEP_BEFORE_RELEASE); // required to preserve typing order
-
-        self.write(EV_KEY, button, 0)?;
-        self.synchronize()
+        self.write_batch(vec![
+            (EV_KEY, button, 0),
+            SYN_PARAMS
+        ])
     }
 
     pub fn click(&mut self, button: Button) -> EmptyResult {
         self.press(button)?;
+        sleep(SLEEP_BEFORE_RELEASE); // required to preserve typing order
         self.release(button)
     }
 }

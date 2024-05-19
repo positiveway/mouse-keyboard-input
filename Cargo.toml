@@ -1,6 +1,6 @@
 [package]
 name = "mouse-keyboard-input"
-version = "0.7.3"
+version = "0.8.1"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
 edition = "2021"
 

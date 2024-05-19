@@ -25,7 +25,7 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-mouse-keyboard-input = "0.7.3"
+mouse-keyboard-input = "0.8.1"
 ```
 To use the latest development version:
 ```
@@ -57,9 +57,11 @@ press(button_or_key)
 release(button_or_key)
 
 move_mouse(x, y)
+move_mouse_x(value)
+move_mouse_y(value)
 
-scroll_vertical(value)
-scroll_horizontal(value)
+scroll_x(value) - scroll horizontally
+scroll_y(value) - scroll vertically
 ```
 ### List of buttons
 #### Mouse
@@ -82,21 +84,19 @@ KEY_LEFTMETA (Meta means Windows button on Linux)
 ### Code examples
 #### Mouse
 ```
-extern crate mouse_keyboard_input;
-
 use mouse_keyboard_input::VirtualDevice;
 use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let mut device = VirtualDevice::new();
+    let mut device = VirtualDevice::default().unwrap();
 
     for _ in 1..5 {
         thread::sleep(Duration::from_secs(1));
 
         // scroll down by 100
-        device.scroll_vertical(-100).unwrap();
+        device.scroll_y(-100).unwrap();
         // move cursor 50 pixels up and 50 pixels to the right from the current position
         device.move_mouse(50, 50).unwrap();
         //click the left mouse button
@@ -106,15 +106,13 @@ fn main() {
 ```
 #### Keyboard
 ```
-extern crate mouse_keyboard_input;
-
 use mouse_keyboard_input::VirtualDevice;
 use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let mut device = VirtualDevice::new();
+    let mut device = VirtualDevice::default().unwrap();
 
     thread::sleep(Duration::from_secs(2));
 
