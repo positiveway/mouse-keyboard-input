@@ -1,5 +1,7 @@
 Easy to use `uinput` wrapper for Rust.
 
+**Much faster (lower latency) than any other library for input emulation on Linux.**
+
 Allows you to send keyboard and mouse events by creating a virtual device in Linux.
 
 `uinput` is a basic Linux library, so this works on any distro and on `X11` or `Wayland`.
