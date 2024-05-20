@@ -28,6 +28,7 @@ macro_rules! uin {
 
 pub mod key_codes;
 mod virtual_device;
+mod utils;
 
 pub use crate::key_codes::*;
 pub use virtual_device::*;

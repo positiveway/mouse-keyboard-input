@@ -11,6 +11,7 @@ use crossbeam_channel::{Sender, Receiver, bounded};
 use libc::gettimeofday;
 
 use crate::*;
+use crate::utils::GradualMove;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type EmptyResult = Result<()>;
@@ -425,6 +426,42 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn gradual_move_mouse_raw(&mut self, x: Coord, y: Coord) -> Result<()> {
+        let gradual_move = GradualMove::calculate(x, y);
+
+        for _ in 0..gradual_move.both_move {
+            self.move_mouse_raw(gradual_move.x_direction, gradual_move.y_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_x {
+            self.move_mouse_raw_x(gradual_move.x_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_y {
+            self.move_mouse_raw_y(gradual_move.y_direction)?;
+        }
+        self.synchronize()?;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn buffered_gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
+        let mut write_buffer: Vec<EventParams> = vec![];
+        let gradual_move = GradualMove::calculate(x, y);
+        
+        for _ in 0..gradual_move.both_move {
+            write_buffer.extend(self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction));
+        }
+        for _ in 0..gradual_move.move_only_x {
+            write_buffer.extend(self.buffered_move_mouse_x(gradual_move.x_direction));
+        }
+        for _ in 0..gradual_move.move_only_y {
+            write_buffer.extend(self.buffered_move_mouse_y(gradual_move.y_direction));
+        }
+        
+        write_buffer
+    }
+
+    #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
         self.write_batch(vec![
             (EV_REL, REL_X, x),
@@ -448,6 +485,43 @@ impl VirtualDevice {
             SYN_PARAMS
         ])
     }
+
+    // #[inline]
+    // pub fn move_mouse_with_options(&mut self, x: Coord, y: Coord, buffered: bool, gradual_move: bool, raw_operations:bool) -> EmptyResult {
+    //     let (mouse_x, mouse_y, mouse) = match buffered {
+    //         true => {
+    //             (
+    //                 Self::buffered_move_mouse_x,
+    //                 Self::buffered_move_mouse_y,
+    //                 Self::buffered_move_mouse,
+    //             )
+    //         }
+    //         false => {
+    //             match raw_operations {
+    //                 true => {
+    //                     (
+    //                         Self::move_mouse_raw_x,
+    //                         Self::move_mouse_raw_y,
+    //                         Self::move_mouse_raw,
+    //                     )
+    //                 }
+    //                 false => {
+    //                     (
+    //                         Self::move_mouse_x,
+    //                         Self::move_mouse_y,
+    //                         Self::move_mouse,
+    //                     )
+    //                 }
+    //             }
+    //         }
+    //     };
+    //     match gradual_move {
+    //         true => {
+    //             
+    //         }
+    //         false => {}
+    //     }
+    // }
 
     #[inline]
     pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult {
@@ -481,6 +555,44 @@ impl VirtualDevice {
             (EV_REL, REL_HWHEEL, value),
             SYN_PARAMS
         ])
+    }
+
+    #[inline]
+    pub fn gradual_scroll_raw(&mut self, x: Coord, y: Coord) -> Result<()> {
+        let gradual_move = GradualMove::calculate(x, y);
+
+        for _ in 0..gradual_move.both_move {
+            self.scroll_raw_x(gradual_move.x_direction)?;
+            self.scroll_raw_y(gradual_move.y_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_x {
+            self.scroll_raw_x(gradual_move.x_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_y {
+            self.scroll_raw_y(gradual_move.y_direction)?;
+        }
+        self.synchronize()?;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn buffered_gradual_scroll(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
+        let mut write_buffer: Vec<EventParams> = vec![];
+        let gradual_move = GradualMove::calculate(x, y);
+
+        for _ in 0..gradual_move.both_move {
+            write_buffer.extend(self.buffered_scroll_x(gradual_move.x_direction));
+            write_buffer.extend(self.buffered_scroll_y(gradual_move.y_direction));
+        }
+        for _ in 0..gradual_move.move_only_x {
+            write_buffer.extend(self.buffered_scroll_x(gradual_move.x_direction));
+        }
+        for _ in 0..gradual_move.move_only_y {
+            write_buffer.extend(self.buffered_scroll_y(gradual_move.y_direction));
+        }
+
+        write_buffer
     }
 
     #[inline]
