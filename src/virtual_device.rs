@@ -328,7 +328,7 @@ impl VirtualDevice {
     }
 
     #[inline]
-    fn write_batch(&mut self, batch: Vec<EventParams>) -> EmptyResult{
+    pub fn write_batch(&mut self, batch: Vec<EventParams>) -> EmptyResult{
         let mut converted = Vec::new();
 
         for event in batch{
@@ -400,6 +400,31 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn buffered_move_mouse_x(&mut self, x: Coord) -> Vec<EventParams> {
+        vec![
+            (EV_REL, REL_X, x),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
+    pub fn buffered_move_mouse_y(&mut self, y: Coord) -> Vec<EventParams> {
+        vec![
+            (EV_REL, REL_Y, -y),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
+    pub fn buffered_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
+        vec![
+            (EV_REL, REL_X, x),
+            (EV_REL, REL_Y, -y),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
         self.write_batch(vec![
             (EV_REL, REL_X, x),
@@ -435,6 +460,22 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn buffered_scroll_x(&mut self, value: Coord) -> Vec<EventParams> {
+        vec![
+            (EV_REL, REL_HWHEEL, value),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
+    pub fn buffered_scroll_y(&mut self, value: Coord) -> Vec<EventParams> {
+        vec![
+            (EV_REL, REL_WHEEL, value),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
         self.write_batch(vec![
             (EV_REL, REL_HWHEEL, value),
@@ -448,6 +489,22 @@ impl VirtualDevice {
             (EV_REL, REL_WHEEL, value),
             SYN_PARAMS
         ])
+    }
+
+    #[inline]
+    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams>  {
+        vec![
+            (EV_KEY, button, 1),
+            SYN_PARAMS
+        ]
+    }
+
+    #[inline]
+    pub fn buffered_release(&mut self, button: Button) -> Vec<EventParams> {
+        vec![
+            (EV_KEY, button, 0),
+            SYN_PARAMS
+        ]
     }
 
     #[inline]
