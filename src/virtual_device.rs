@@ -329,7 +329,7 @@ impl VirtualDevice {
     }
 
     #[inline]
-    pub fn write_batch(&mut self, batch: Vec<EventParams>) -> EmptyResult{
+    pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult{
         let mut converted = Vec::new();
 
         for event in batch{
@@ -394,7 +394,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_X, x),
             (EV_REL, REL_Y, -y),
         ])
@@ -463,7 +463,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_X, x),
             SYN_PARAMS
         ])
@@ -471,7 +471,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_Y, -y),
             SYN_PARAMS
         ])
@@ -479,7 +479,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_X, x),
             (EV_REL, REL_Y, -y),
             SYN_PARAMS
@@ -551,7 +551,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_HWHEEL, value),
             SYN_PARAMS
         ])
@@ -597,7 +597,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_REL, REL_WHEEL, value),
             SYN_PARAMS
         ])
@@ -621,7 +621,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn press(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_KEY, button, 1),
             SYN_PARAMS
         ])
@@ -629,7 +629,7 @@ impl VirtualDevice {
 
     #[inline]
     pub fn release(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(vec![
+        self.write_batch(&[
             (EV_KEY, button, 0),
             SYN_PARAMS
         ])
