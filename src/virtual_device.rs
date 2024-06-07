@@ -67,18 +67,23 @@ const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try
 
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
-        VirtualDevice::new(
+        Self::default_single_device(DeviceDefinitionType::None)
+    }
+
+    fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self>{
+        Self::new(
             Duration::from_millis(1),
             50,
-            DeviceDefinitionType::None,
+            definition_type,
         )
     }
-    // pub fn new(writing_interval: Duration, channel_size: usize, separate_devices: bool) -> Result<(Self, Self)> {
-    //     Ok((
-    //         Self::_new(writing_interval, channel_size, true)?,
-    //         Self::_new(writing_interval, channel_size, false)?,
-    //     ))
-    // }
+
+    pub fn default_separate() -> Result<(Self, Self)> {
+        Ok((
+            Self::default_single_device(DeviceDefinitionType::MouseOnly)?,
+            Self::default_single_device(DeviceDefinitionType::KeyboardOnly)?,
+        ))
+    }
 
     fn new(writing_interval: Duration, channel_size: usize, definition_type: DeviceDefinitionType) -> Result<Self> {
         let (s, r) = bounded(channel_size);
