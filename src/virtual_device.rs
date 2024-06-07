@@ -444,6 +444,11 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn smooth_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> {
+        self.gradual_move_mouse_raw(x, y)
+    }
+
+    #[inline]
     pub fn buffered_gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         let mut write_buffer: Vec<EventParams> = vec![];
         let gradual_move = GradualMove::calculate(x, y);
@@ -574,6 +579,11 @@ impl VirtualDevice {
         self.synchronize()?;
 
         Ok(())
+    }
+
+    #[inline]
+    pub fn smooth_scroll(&mut self, x: Coord, y: Coord) -> Result<()> {
+        self.gradual_scroll_raw(x, y)
     }
 
     #[inline]

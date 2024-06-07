@@ -27,7 +27,7 @@ sudo apt install libudev-dev libevdev-dev libhidapi-dev
 
 Add to `Cargo.toml`
 ```
-mouse-keyboard-input = "0.8.1"
+mouse-keyboard-input = "0.9.1"
 ```
 To use the latest development version:
 ```
@@ -58,12 +58,16 @@ click(button_or_key) - click mouse button or type a key
 press(button_or_key)
 release(button_or_key)
 
-move_mouse(x, y)
-move_mouse_x(value)
-move_mouse_y(value)
+smooth_move_mouse(x, y) - gradually move mouse from the current position on screen by (x, y) pixels. this method is preferred
 
-scroll_x(value) - scroll horizontally
-scroll_y(value) - scroll vertically
+move_mouse(x, y) - move mouse instantly
+move_mouse_x(value) - move mouse instantly
+move_mouse_y(value)- move mouse instantly
+
+smooth_scroll(x, y) - gradually scroll. this method is preferred
+
+scroll_x(value) - instantly scroll horizontally
+scroll_y(value) - instantly scroll vertically
 ```
 ### List of buttons
 #### Mouse
@@ -94,15 +98,26 @@ use std::time::Duration;
 fn main() {
     let mut device = VirtualDevice::default().unwrap();
 
-    for _ in 1..5 {
+    for _ in 1..3 {
+        thread::sleep(Duration::from_secs(1));
+
+        // gradually scroll down by 100
+        device.smooth_scroll(0, -100).unwrap();
+        // gradually move cursor 250 pixels up and 250 pixels to the right from the current position
+        device.smooth_move_mouse(250, 250).unwrap();
+        //click the left mouse button
+        device.click(BTN_RIGHT).unwrap();
+    }
+
+    for _ in 1..2 {
         thread::sleep(Duration::from_secs(1));
 
         // scroll down by 100
         device.scroll_y(-100).unwrap();
-        // move cursor 50 pixels up and 50 pixels to the right from the current position
-        device.move_mouse(50, 50).unwrap();
+        // instantly move cursor 250 pixels up and 250 pixels to the right from the current position
+        device.move_mouse(250, 250).unwrap();
         //click the left mouse button
-        device.click(BTN_LEFT).unwrap();
+        device.click(BTN_RIGHT).unwrap();
     }
 }
 ```
