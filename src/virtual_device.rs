@@ -449,6 +449,23 @@ impl VirtualDevice {
     }
 
     #[inline]
+    pub fn gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> {
+        let gradual_move = GradualMove::calculate(x, y);
+
+        for _ in 0..gradual_move.both_move {
+            self.move_mouse(gradual_move.x_direction, gradual_move.y_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_x {
+            self.move_mouse_x(gradual_move.x_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_y {
+            self.move_mouse_y(gradual_move.y_direction)?;
+        }
+
+        Ok(())
+    }
+
+    #[inline]
     pub fn smooth_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> {
         self.gradual_move_mouse_raw(x, y)
     }
@@ -582,6 +599,24 @@ impl VirtualDevice {
             self.scroll_raw_y(gradual_move.y_direction)?;
         }
         self.synchronize()?;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn gradual_scroll(&mut self, x: Coord, y: Coord) -> Result<()> {
+        let gradual_move = GradualMove::calculate(x, y);
+
+        for _ in 0..gradual_move.both_move {
+            self.scroll_x(gradual_move.x_direction)?;
+            self.scroll_y(gradual_move.y_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_x {
+            self.scroll_x(gradual_move.x_direction)?;
+        }
+        for _ in 0..gradual_move.move_only_y {
+            self.scroll_y(gradual_move.y_direction)?;
+        }
 
         Ok(())
     }
