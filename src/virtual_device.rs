@@ -38,19 +38,24 @@ const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
 
 #[inline(always)]
-fn convert_event_for_writing(kind: u16, code: u16, value: i32) -> Vec<u8> {
-    let mut input_event = input_event {
-        time: FIXED_TIME,
-        kind,
-        code,
-        value,
-    };
+fn convert_event_for_writing(kind: u16, code: u16, value: i32, input_event: &mut input_event) -> Vec<u8> {
+    input_event.time = FIXED_TIME;
+    input_event.kind = kind;
+    input_event.code = code;
+    input_event.value = value;
+
+    // let mut input_event = input_event {
+    //     time: FIXED_TIME,
+    //     kind,
+    //     code,
+    //     value,
+    // };
 
     unsafe {
         // gettimeofday(&mut input_event.time, ptr::null_mut());
 
-        let ptr = &input_event as *const _ as *const u8;
-        let size = mem::size_of_val(&input_event);
+        let ptr = input_event as *const _ as *const u8;
+        let size = mem::size_of_val(input_event);
         let content = slice::from_raw_parts(ptr, size);
         content.to_vec()
     }
@@ -64,6 +69,7 @@ pub enum DeviceDefinitionType{
 }
 
 const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
+
 
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
@@ -104,6 +110,7 @@ impl VirtualDevice {
         let file = OpenOptions::new()
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
+            // .custom_flags(libc::O_WRONLY | libc::O_NDELAY)
             .open(path)?;
 
         // Mouse:
@@ -111,7 +118,7 @@ impl VirtualDevice {
         // Keyboard:
         // Bus=0011 Vendor=0001 Product=0001 Version=ab83
 
-        let mut definition: uinput_user_dev = unsafe { mem::zeroed() };
+        let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         let mut device_name: String;
 
         match definition_type {
@@ -119,7 +126,7 @@ impl VirtualDevice {
                 return Err(Box::from("Not implemented"));
             }
             DeviceDefinitionType::MouseOnly => {
-                definition.id = input_id {
+                def.id = input_id {
                     bustype: 0x0003,
                     vendor: 0x045e,
                     product: 0x07a5,
@@ -128,7 +135,7 @@ impl VirtualDevice {
                 device_name = String::from("virtual-mouse");
             }
             DeviceDefinitionType::KeyboardOnly => {
-                definition.id = input_id {
+                def.id = input_id {
                     bustype: 0x0011,
                     vendor: 0x0001,
                     product: 0x0001,
@@ -144,7 +151,7 @@ impl VirtualDevice {
         let mut virtual_device = VirtualDevice {
             writing_interval,
             file,
-            def: definition,
+            def,
             sender: s,
             receiver: r,
         };
@@ -155,8 +162,21 @@ impl VirtualDevice {
 
         virtual_device.set_name(device_name.as_str())?;
 
-        virtual_device.register_mouse()?;
-        virtual_device.register_keyboard()?;
+        match definition_type {
+            DeviceDefinitionType::Separate => {
+                return Err(Box::from("Not implemented"));
+            }
+            DeviceDefinitionType::MouseOnly => {
+                virtual_device.register_mouse()?;
+            }
+            DeviceDefinitionType::KeyboardOnly => {
+                virtual_device.register_keyboard()?;
+            }
+            DeviceDefinitionType::None => {
+                virtual_device.register_mouse()?;
+                virtual_device.register_keyboard()?;
+            }
+        }
 
         virtual_device.create()?;
 
@@ -185,8 +205,9 @@ impl VirtualDevice {
         unsafe {
             let ptr = &self.def as *const _ as *const u8;
             let size = mem::size_of_val(&self.def);
+            let as_slice = slice::from_raw_parts(ptr, size);
 
-            self.file.write_all(slice::from_raw_parts(ptr, size))?;
+            self.file.write_all(as_slice)?;
 
             Errno::result(ui_dev_create(self.file.as_raw_fd()))?;
         }
@@ -194,6 +215,9 @@ impl VirtualDevice {
     }
 
     fn register_keyboard(&self) -> EmptyResult {
+        unsafe {
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+        }
         for code in 1..255 {
             self.register_key(code)?
         }
@@ -201,6 +225,10 @@ impl VirtualDevice {
     }
 
     fn register_mouse(&self) -> EmptyResult {
+        unsafe {
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+        }
         for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
             self.register_key(code)?
         }
@@ -214,7 +242,8 @@ impl VirtualDevice {
 
     fn register_key(&self, code: u16) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+
             Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?;
         }
         Ok(())
@@ -222,7 +251,8 @@ impl VirtualDevice {
 
     fn register_relative(&self, code: u16) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+
             Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?;
         }
         Ok(())

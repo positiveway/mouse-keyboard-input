@@ -57,7 +57,7 @@ pub struct input_id {
 #[derive(Debug)]
 #[repr(C)]
 pub struct uinput_user_dev {
-    pub name: [i8; UINPUT_MAX_NAME_SIZE as usize],
+    pub name: [i8; UINPUT_MAX_NAME_SIZE],
     pub id: input_id,
 
     pub ff_effects_max: u32,
