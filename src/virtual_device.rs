@@ -1,17 +1,19 @@
-use std::path::Path;
-use std::{fs, mem, ptr, slice, thread};
+#![allow(dead_code)]
+
+use crossbeam_channel::{bounded, Receiver, Sender};
+use nix::errno::Errno;
 use std::ffi::CString;
 use std::fs::File;
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use std::thread::{JoinHandle, sleep};
-use std::time::{Duration, Instant, SystemTime};
-use nix::errno::Errno;
-use crossbeam_channel::{Sender, Receiver, bounded};
-use libc::gettimeofday;
+use std::path::Path;
+use std::thread::{sleep, JoinHandle};
+use std::time::{Duration, Instant};
+use std::{fs, mem, slice, thread};
 
-use crate::*;
+use crate::key_codes::KeyCodes;
 use crate::utils::GradualMove;
+use crate::*;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type EmptyResult = Result<()>;
@@ -31,14 +33,21 @@ pub struct VirtualDevice {
     receiver: ChannelReceiver,
 }
 
-const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
-const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
+const FIXED_TIME: timeval = timeval {
+    tv_sec: 0,
+    tv_usec: 0,
+};
+const SYN_PARAMS: EventParams = (KeyCodes::EV_SYN, KeyCodes::SYN_REPORT, 0);
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
-
 #[inline(always)]
-fn convert_event_for_writing(kind: u16, code: u16, value: i32, input_event: &mut input_event) -> Vec<u8> {
+fn convert_event_for_writing(
+    kind: u16,
+    code: u16,
+    value: i32,
+    input_event: &mut input_event,
+) -> Vec<u8> {
     input_event.time = FIXED_TIME;
     input_event.kind = kind;
     input_event.code = code;
@@ -61,27 +70,23 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32, input_event: &mut
     }
 }
 
-pub enum DeviceDefinitionType{
+pub enum DeviceDefinitionType {
     Separate,
     MouseOnly,
     KeyboardOnly,
     None,
 }
 
-const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
-
+const UINPUT_NOT_LOADED_ERR: &str =
+    "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
 
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
         Self::default_single_device(DeviceDefinitionType::None)
     }
 
-    fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self>{
-        Self::new(
-            Duration::from_millis(1),
-            50,
-            definition_type,
-        )
+    fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self> {
+        Self::new(Duration::from_millis(1), 50, definition_type)
     }
 
     pub fn default_separate() -> Result<(Self, Self)> {
@@ -91,7 +96,11 @@ impl VirtualDevice {
         ))
     }
 
-    fn new(writing_interval: Duration, channel_size: usize, definition_type: DeviceDefinitionType) -> Result<Self> {
+    fn new(
+        writing_interval: Duration,
+        channel_size: usize,
+        definition_type: DeviceDefinitionType,
+    ) -> Result<Self> {
         let (s, r) = bounded(channel_size);
 
         let path = Path::new("/dev/uinput");
@@ -119,7 +128,7 @@ impl VirtualDevice {
         // Bus=0011 Vendor=0001 Product=0001 Version=ab83
 
         let mut def: uinput_user_dev = unsafe { mem::zeroed() };
-        let mut device_name: String;
+        let device_name: String;
 
         match definition_type {
             DeviceDefinitionType::Separate => {
@@ -188,15 +197,13 @@ impl VirtualDevice {
         let bytes = string.as_bytes_with_nul();
 
         if bytes.len() > UINPUT_MAX_NAME_SIZE {
-            return Err(Box::from(
-                format!(
-                    "Virtual device name is longer than maximum allowed size: {}.\nUse shorter name",
-                    UINPUT_MAX_NAME_SIZE
-                )));
+            return Err(Box::from(format!(
+                "Virtual device name is longer than maximum allowed size: {}.\nUse shorter name",
+                UINPUT_MAX_NAME_SIZE
+            )));
         }
 
-        (&mut self.def.name)[..bytes.len()]
-            .clone_from_slice(unsafe { mem::transmute(bytes) });
+        (&mut self.def.name)[..bytes.len()].clone_from_slice(unsafe { mem::transmute(bytes) });
 
         Ok(())
     }
@@ -216,7 +223,7 @@ impl VirtualDevice {
 
     fn register_keyboard(&self) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), KeyCodes::EV_KEY as i32))?;
         }
         for code in 1..255 {
             self.register_key(code)?
@@ -226,14 +233,23 @@ impl VirtualDevice {
 
     fn register_mouse(&self) -> EmptyResult {
         unsafe {
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
-            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), KeyCodes::EV_KEY as i32))?;
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), KeyCodes::EV_REL as i32))?;
         }
-        for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
+        for code in [
+            KeyCodes::BTN_LEFT,
+            KeyCodes::BTN_RIGHT,
+            KeyCodes::BTN_MIDDLE,
+        ] {
             self.register_key(code)?
         }
 
-        for code in [REL_X, REL_Y, REL_HWHEEL, REL_WHEEL] {
+        for code in [
+            KeyCodes::REL_X,
+            KeyCodes::REL_Y,
+            KeyCodes::REL_HWHEEL,
+            KeyCodes::REL_WHEEL,
+        ] {
             self.register_relative(code)?
         }
 
@@ -242,7 +258,7 @@ impl VirtualDevice {
 
     fn register_key(&self, code: u16) -> EmptyResult {
         unsafe {
-            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), KeyCodes::EV_KEY as i32))?;
 
             Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?;
         }
@@ -251,7 +267,7 @@ impl VirtualDevice {
 
     fn register_relative(&self, code: u16) -> EmptyResult {
         unsafe {
-            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
+            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), KeyCodes::EV_REL as i32))?;
 
             Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?;
         }
@@ -259,21 +275,26 @@ impl VirtualDevice {
     }
 
     #[inline]
-    pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
+    pub fn send_to_channel(
+        kind: u16,
+        code: u16,
+        value: i32,
+        sender: &ChannelSender,
+    ) -> EmptyResult {
         sender.send((kind, code, value))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_press(button: Button, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_KEY, button, 1))?;
+        sender.send((KeyCodes::EV_KEY, button, 1))?;
         sender.send(SYN_PARAMS)?;
         Ok(())
     }
 
     #[inline]
     pub fn send_release(button: Button, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_KEY, button, 0))?;
+        sender.send((KeyCodes::EV_KEY, button, 0))?;
         Ok(())
     }
 
@@ -284,49 +305,47 @@ impl VirtualDevice {
 
     #[inline]
     pub fn send_mouse_move_x(x: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_X, x))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_X, x))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_mouse_move_y(y: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_Y, -y))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_Y, -y))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_mouse_move(x: Coord, y: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_X, x))?;
-        sender.send((EV_REL, REL_Y, -y))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_X, x))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_Y, -y))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_scroll_x(value: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_HWHEEL, value))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_HWHEEL, value))?;
         Ok(())
     }
 
     #[inline]
     pub fn send_scroll_y(value: Coord, sender: &ChannelSender) -> EmptyResult {
-        sender.send((EV_REL, REL_WHEEL, value))?;
+        sender.send((KeyCodes::EV_REL, KeyCodes::REL_WHEEL, value))?;
         Ok(())
     }
 
     pub fn flush_channel_every_interval(mut self) -> JoinHandle<()> {
         let writing_interval = self.writing_interval;
 
-        thread::spawn(move || {
-            loop {
-                let start = Instant::now();
+        thread::spawn(move || loop {
+            let start = Instant::now();
 
-                self.write_events_from_channel().unwrap();
+            self.write_events_from_channel().unwrap();
 
-                let runtime = start.elapsed();
+            let runtime = start.elapsed();
 
-                if let Some(remaining) = writing_interval.checked_sub(runtime) {
-                    sleep(remaining);
-                }
+            if let Some(remaining) = writing_interval.checked_sub(runtime) {
+                sleep(remaining);
             }
         })
 
@@ -342,7 +361,7 @@ impl VirtualDevice {
             // let mut content = convert_event_for_writing(event.0, event.1, event.2);
             // converted.append(&mut content);
 
-            let mut input_event = input_event {
+            let input_event = input_event {
                 time: FIXED_TIME,
                 kind: event.0,
                 code: event.1,
@@ -364,11 +383,11 @@ impl VirtualDevice {
     }
 
     #[inline]
-    pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult{
+    pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult {
         let mut converted = Vec::new();
 
-        for event in batch{
-            let mut input_event = input_event {
+        for event in batch {
+            let input_event = input_event {
                 time: FIXED_TIME,
                 kind: event.0,
                 code: event.1,
@@ -393,7 +412,7 @@ impl VirtualDevice {
         // let content = convert_event_for_writing(kind, code, value);
         // self.file.write_all(content.as_slice())?;
 
-        let mut input_event = input_event {
+        let input_event = input_event {
             time: FIXED_TIME,
             kind,
             code,
@@ -414,49 +433,43 @@ impl VirtualDevice {
 
     #[inline(always)]
     pub fn synchronize(&mut self) -> EmptyResult {
-        self.write(EV_SYN, SYN_REPORT, 0)
+        self.write(KeyCodes::EV_SYN, KeyCodes::SYN_REPORT, 0)
     }
 
     #[inline]
     pub fn move_mouse_raw_x(&mut self, x: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_X, x)
+        self.write(KeyCodes::EV_REL, KeyCodes::REL_X, x)
     }
 
     #[inline]
     pub fn move_mouse_raw_y(&mut self, y: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_Y, -y)
+        self.write(KeyCodes::EV_REL, KeyCodes::REL_Y, -y)
     }
 
     #[inline]
     pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
         self.write_batch(&[
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
+            (KeyCodes::EV_REL, KeyCodes::REL_X, x),
+            (KeyCodes::EV_REL, KeyCodes::REL_Y, -y),
         ])
     }
 
     #[inline]
     pub fn buffered_move_mouse_x(&mut self, x: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_X, x),
-            SYN_PARAMS
-        ]
+        vec![(KeyCodes::EV_REL, KeyCodes::REL_X, x), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_move_mouse_y(&mut self, y: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ]
+        vec![(KeyCodes::EV_REL, KeyCodes::REL_Y, -y), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         vec![
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
+            (KeyCodes::EV_REL, KeyCodes::REL_X, x),
+            (KeyCodes::EV_REL, KeyCodes::REL_Y, -y),
+            SYN_PARAMS,
         ]
     }
 
@@ -504,9 +517,11 @@ impl VirtualDevice {
     pub fn buffered_gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         let mut write_buffer: Vec<EventParams> = vec![];
         let gradual_move = GradualMove::calculate(x, y);
-        
+
         for _ in 0..gradual_move.both_move {
-            write_buffer.extend(self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction));
+            write_buffer.extend(
+                self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction),
+            );
         }
         for _ in 0..gradual_move.move_only_x {
             write_buffer.extend(self.buffered_move_mouse_x(gradual_move.x_direction));
@@ -514,32 +529,26 @@ impl VirtualDevice {
         for _ in 0..gradual_move.move_only_y {
             write_buffer.extend(self.buffered_move_mouse_y(gradual_move.y_direction));
         }
-        
+
         write_buffer
     }
 
     #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_X, x),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_REL, KeyCodes::REL_X, x), SYN_PARAMS])
     }
 
     #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_REL, KeyCodes::REL_Y, -y), SYN_PARAMS])
     }
 
     #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
         self.write_batch(&[
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
+            (KeyCodes::EV_REL, KeyCodes::REL_X, x),
+            (KeyCodes::EV_REL, KeyCodes::REL_Y, -y),
+            SYN_PARAMS,
         ])
     }
 
@@ -574,7 +583,7 @@ impl VirtualDevice {
     //     };
     //     match gradual_move {
     //         true => {
-    //             
+    //
     //         }
     //         false => {}
     //     }
@@ -582,36 +591,27 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_HWHEEL, value)
+        self.write(KeyCodes::EV_REL, KeyCodes::REL_HWHEEL, value)
     }
 
     #[inline]
     pub fn scroll_raw_y(&mut self, value: Coord) -> EmptyResult {
-        self.write(EV_REL, REL_WHEEL, value)
+        self.write(KeyCodes::EV_REL, KeyCodes::REL_WHEEL, value)
     }
 
     #[inline]
     pub fn buffered_scroll_x(&mut self, value: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_HWHEEL, value),
-            SYN_PARAMS
-        ]
+        vec![(KeyCodes::EV_REL, KeyCodes::REL_HWHEEL, value), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_scroll_y(&mut self, value: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_WHEEL, value),
-            SYN_PARAMS
-        ]
+        vec![(KeyCodes::EV_REL, KeyCodes::REL_WHEEL, value), SYN_PARAMS]
     }
 
     #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_HWHEEL, value),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_REL, KeyCodes::REL_HWHEEL, value), SYN_PARAMS])
     }
 
     #[inline]
@@ -677,42 +677,27 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_WHEEL, value),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_REL, KeyCodes::REL_WHEEL, value), SYN_PARAMS])
     }
 
     #[inline]
-    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams>  {
-        vec![
-            (EV_KEY, button, 1),
-            SYN_PARAMS
-        ]
+    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams> {
+        vec![(KeyCodes::EV_KEY, button, 1), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_release(&mut self, button: Button) -> Vec<EventParams> {
-        vec![
-            (EV_KEY, button, 0),
-            SYN_PARAMS
-        ]
+        vec![(KeyCodes::EV_KEY, button, 0), SYN_PARAMS]
     }
 
     #[inline]
     pub fn press(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(&[
-            (EV_KEY, button, 1),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_KEY, button, 1), SYN_PARAMS])
     }
 
     #[inline]
     pub fn release(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(&[
-            (EV_KEY, button, 0),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(KeyCodes::EV_KEY, button, 0), SYN_PARAMS])
     }
 
     pub fn click(&mut self, button: Button) -> EmptyResult {
@@ -729,3 +714,4 @@ impl Drop for VirtualDevice {
         }
     }
 }
+
