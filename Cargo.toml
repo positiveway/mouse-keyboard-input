@@ -1,8 +1,8 @@
 [package]
 name = "mouse-keyboard-input"
-version = "0.9.1"
+version = "0.9.2"
 authors = ["Andrew Korovkin <positiveway05@gmail.com>"]
-edition = "2021"
+edition = "2024"
 
 description = "Send mouse and keyboard events on any distro and X11 or Wayland"
 keywords = ["linux", "input", "mouse", "keyboard", "control"]
@@ -19,4 +19,4 @@ auto-acquire-permissions = []
 crossbeam-channel = "0.5"
 libc = "0.2"
 ioctl-sys = "0.8"
-nix = "0.28"
+nix = "0.30"
