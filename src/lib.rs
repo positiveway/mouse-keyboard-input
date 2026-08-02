@@ -1,40 +1,44 @@
 #[macro_use]
 extern crate ioctl_sys as ioctl;
+extern crate crossbeam_channel;
 extern crate libc;
 extern crate nix;
-extern crate crossbeam_channel;
 
 use libc::timeval;
 use std::mem;
 
 #[cfg(target_arch = "arm")]
 macro_rules! uin {
-	(write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => (
-		pub unsafe fn $name(fd: i32, val: $ty) -> i32 {
-            ioctl::ioctl(fd, (iow!($ioty, $nr, mem::size_of::<$ty>()) as u64).try_into().unwrap(), val)
-		}
-	);
+    (write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => {
+        pub unsafe fn $name(fd: i32, val: $ty) -> i32 {
+            ioctl::ioctl(
+                fd,
+                (iow!($ioty, $nr, mem::size_of::<$ty>()) as u64)
+                    .try_into()
+                    .unwrap(),
+                val,
+            )
+        }
+    };
 }
 
 #[cfg(not(target_arch = "arm"))]
 macro_rules! uin {
-	(write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => (
-		pub unsafe fn $name(fd: i32, val: $ty) -> i32 {
-			ioctl::ioctl(fd, iow!($ioty, $nr, mem::size_of::<$ty>()) as u64, val)
-		}
-	);
+    (write $name:ident with $ioty:expr, $nr:expr; $ty:ty) => {
+        pub unsafe fn $name(fd: i32, val: $ty) -> i32 {
+            ioctl::ioctl(fd, iow!($ioty, $nr, mem::size_of::<$ty>()) as u64, val)
+        }
+    };
 }
 
-
 pub mod key_codes;
-mod virtual_device;
 mod utils;
+mod virtual_device;
 
 pub use crate::key_codes::*;
 pub use virtual_device::*;
 
 pub const UINPUT_MAX_NAME_SIZE: usize = 80;
-
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -66,21 +70,6 @@ pub struct uinput_user_dev {
     pub absfuzz: [i32; ABS_CNT as usize],
     pub absflat: [i32; ABS_CNT as usize],
 }
-
-//#[repr(C)]
-//pub struct uinput_ff_upload {
-//	pub request_id: u32,
-//	pub retval:     i32,
-//	pub effect:     ff_effect,
-//	pub old:        ff_effect,
-//}
-//
-//#[repr(C)]
-//pub struct uinput_ff_erase {
-//	pub request_id: u32,
-//	pub retval:     i32,
-//	pub effect_id:  u32,
-//}
 
 ioctl!(none ui_dev_create with b'U', 1);
 ioctl!(none ui_dev_destroy with b'U', 2);

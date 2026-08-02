@@ -1,14 +1,20 @@
 use std::path::Path;
-use std::{fs, mem, ptr, slice, thread};
+use std::{fs, mem, slice, thread};
 use std::ffi::CString;
 use std::fs::File;
-use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::thread::{JoinHandle, sleep};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use nix::errno::Errno;
 use crossbeam_channel::{Sender, Receiver, bounded};
-use libc::gettimeofday;
+
+#[cfg(not(feature = "io-uring"))]
+use std::io::Write;
+
+#[cfg(feature = "io-uring")]
+use std::collections::VecDeque;
+#[cfg(feature = "io-uring")]
+use io_uring::{IoUring, opcode, types, squeue};
 
 use crate::*;
 use crate::utils::GradualMove;
@@ -29,31 +35,48 @@ pub struct VirtualDevice {
     def: uinput_user_dev,
     pub sender: ChannelSender,
     receiver: ChannelReceiver,
+    #[cfg(feature = "io-uring")]
+    ring: IoUring,
+    #[cfg(feature = "io-uring")]
+    buffers: Vec<Vec<u8>>,
+    #[cfg(feature = "io-uring")]
+    free_buffers: VecDeque<usize>,
+    #[cfg(feature = "io-uring")]
+    outstanding: u32,
 }
 
-const FIXED_TIME: timeval = timeval { tv_sec: 0, tv_usec: 0 };
+const FIXED_TIME: libc::timeval = libc::timeval { tv_sec: 0, tv_usec: 0 };
 const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 
+const UINPUT_NOT_LOADED_ERR: &str =
+    "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
+
+/// Size of the io_uring submission/completion queue.
+#[cfg(feature = "io-uring")]
+const IO_URING_ENTRIES: u32 = 64;
+/// Number of pre-allocated buffers for async writes.
+#[cfg(feature = "io-uring")]
+const IO_URING_BUFFERS: usize = 64;
+/// Max size of a single batch write buffer.
+#[cfg(feature = "io-uring")]
+const IO_URING_BUFFER_SIZE: usize = 4096;
+
 
 #[inline(always)]
-fn convert_event_for_writing(kind: u16, code: u16, value: i32, input_event: &mut input_event) -> Vec<u8> {
+fn convert_event_for_writing(
+    kind: u16,
+    code: u16,
+    value: i32,
+    input_event: &mut input_event,
+) -> Vec<u8> {
     input_event.time = FIXED_TIME;
     input_event.kind = kind;
     input_event.code = code;
     input_event.value = value;
 
-    // let mut input_event = input_event {
-    //     time: FIXED_TIME,
-    //     kind,
-    //     code,
-    //     value,
-    // };
-
     unsafe {
-        // gettimeofday(&mut input_event.time, ptr::null_mut());
-
         let ptr = input_event as *const _ as *const u8;
         let size = mem::size_of_val(input_event);
         let content = slice::from_raw_parts(ptr, size);
@@ -61,14 +84,12 @@ fn convert_event_for_writing(kind: u16, code: u16, value: i32, input_event: &mut
     }
 }
 
-pub enum DeviceDefinitionType{
+pub enum DeviceDefinitionType {
     Separate,
     MouseOnly,
     KeyboardOnly,
     None,
 }
-
-const UINPUT_NOT_LOADED_ERR: &str = "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
 
 
 impl VirtualDevice {
@@ -76,7 +97,7 @@ impl VirtualDevice {
         Self::default_single_device(DeviceDefinitionType::None)
     }
 
-    fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self>{
+    fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self> {
         Self::new(
             Duration::from_millis(1),
             50,
@@ -91,7 +112,11 @@ impl VirtualDevice {
         ))
     }
 
-    fn new(writing_interval: Duration, channel_size: usize, definition_type: DeviceDefinitionType) -> Result<Self> {
+    fn new(
+        writing_interval: Duration,
+        channel_size: usize,
+        definition_type: DeviceDefinitionType,
+    ) -> Result<Self> {
         let (s, r) = bounded(channel_size);
 
         let path = Path::new("/dev/uinput");
@@ -110,13 +135,34 @@ impl VirtualDevice {
         let file = OpenOptions::new()
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
-            // .custom_flags(libc::O_WRONLY | libc::O_NDELAY)
             .open(path)?;
 
-        // Mouse:
-        // Bus=0003 Vendor=045e Product=07a5 Version=0111
-        // Keyboard:
-        // Bus=0011 Vendor=0001 Product=0001 Version=ab83
+        // Initialize the advanced io_ring. We use `DEFER_TASKRUN` which drastically
+        // reduces latency by moving task work to the submission thread rather than
+        // handling it via softirqs. We also register the file descriptor to avoid
+        // fd lookup overhead in the kernel on every single write.
+        #[cfg(feature = "io-uring")]
+        let ring = {
+            let r = IoUring::builder()
+                .setup_defer_taskrun()
+                .build(IO_URING_ENTRIES)
+                .or_else(|_| IoUring::new(IO_URING_ENTRIES))
+                .map_err(|e| Box::from(format!("Failed to create io_uring: {}", e)))?;
+
+            let fds = [file.as_raw_fd()];
+            r.submitter()
+                .register_files(&fds)
+                .map_err(|e| Box::from(format!("Failed to register files: {}", e)))?;
+            r
+        };
+
+        #[cfg(feature = "io-uring")]
+        let buffers = (0..IO_URING_BUFFERS)
+            .map(|_| Vec::with_capacity(IO_URING_BUFFER_SIZE))
+            .collect();
+
+        #[cfg(feature = "io-uring")]
+        let free_buffers = (0..IO_URING_BUFFERS).collect();
 
         let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         let mut device_name: String;
@@ -154,11 +200,15 @@ impl VirtualDevice {
             def,
             sender: s,
             receiver: r,
+            #[cfg(feature = "io-uring")]
+            ring,
+            #[cfg(feature = "io-uring")]
+            buffers,
+            #[cfg(feature = "io-uring")]
+            free_buffers,
+            #[cfg(feature = "io-uring")]
+            outstanding: 0,
         };
-
-        // let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?;
-        // let device_name = format!("virtualdevice-{}", now.as_millis());
-        // println!("{}", device_name);
 
         virtual_device.set_name(device_name.as_str())?;
 
@@ -195,8 +245,10 @@ impl VirtualDevice {
                 )));
         }
 
-        (&mut self.def.name)[..bytes.len()]
-            .clone_from_slice(unsafe { mem::transmute(bytes) });
+        let signed_bytes: &[i8] =
+            unsafe { slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
+
+        self.def.name[..bytes.len()].clone_from_slice(signed_bytes);
 
         Ok(())
     }
@@ -207,7 +259,8 @@ impl VirtualDevice {
             let size = mem::size_of_val(&self.def);
             let as_slice = slice::from_raw_parts(ptr, size);
 
-            self.file.write_all(as_slice)?;
+            // The struct write MUST complete synchronously before `ui_dev_create`.
+            self.file_write_all_sync(as_slice)?;
 
             Errno::result(ui_dev_create(self.file.as_raw_fd()))?;
         }
@@ -242,8 +295,6 @@ impl VirtualDevice {
 
     fn register_key(&self, code: u16) -> EmptyResult {
         unsafe {
-            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
-
             Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?;
         }
         Ok(())
@@ -251,11 +302,100 @@ impl VirtualDevice {
 
     fn register_relative(&self, code: u16) -> EmptyResult {
         unsafe {
-            // Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
-
             Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?;
         }
         Ok(())
+    }
+
+    /// Unified entry point for writing raw bytes to the uinput fd.
+    /// Asynchronous when `io-uring` is enabled, synchronous otherwise.
+    #[cfg(feature = "io-uring")]
+    #[inline]
+    fn file_write_all(&mut self, buf: &[u8]) -> EmptyResult {
+        if buf.is_empty() {
+            return Ok(());
+        }
+
+        self.reap_completions();
+
+        // Backpressure: If no free buffers or SQ is full, wait for at least 1 completion
+        if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
+            self.ring.submit_and_wait(1)
+                .map_err(|e| Box::from(format!("io_uring submit_and_wait failed: {}", e)))?;
+            self.reap_completions();
+        }
+
+        let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
+
+        let buf_idx = free_buffers.pop_front()
+            .ok_or_else(|| Box::from("io_uring no free buffers after wait"))?;
+
+        let buffer = &mut buffers[buf_idx];
+        if buffer.len() < buf.len() {
+            buffer.resize(buf.len(), 0);
+        }
+        buffer[..buf.len()].copy_from_slice(buf);
+
+        // Use Fixed file descriptor (index 0) to bypass kernel fd lookups
+        let entry = opcode::Write::new(types::Fd(0), buffer.as_ptr(), buf.len() as u32)
+            .build()
+            .flags(squeue::Flags::FIXED_FILE)
+            .user_data(buf_idx as u64);
+
+        {
+            let mut sq = ring.submission();
+            unsafe {
+                sq.push(&entry)
+                    .map_err(|e| Box::from(format!("io_uring push failed: {:?}", e)))?;
+            }
+        }
+        *outstanding += 1;
+
+        // Submit immediately. With DEFER_TASKRUN, this also processes any pending completions.
+        ring.submit()
+            .map_err(|e| Box::from(format!("io_uring submit failed: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Synchronous write variant for initialization routines
+    #[cfg(feature = "io-uring")]
+    #[inline]
+    fn file_write_all_sync(&mut self, buf: &[u8]) -> EmptyResult {
+        self.file_write_all(buf)?;
+        // Spin/wait until all pending async writes are completed
+        while self.outstanding > 0 {
+            self.ring.submit_and_wait(1)
+                .map_err(|e| Box::from(format!("io_uring sync wait failed: {}", e)))?;
+            self.reap_completions();
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "io-uring"))]
+    #[inline]
+    fn file_write_all(&mut self, buf: &[u8]) -> EmptyResult {
+        self.file.write_all(buf)?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "io-uring"))]
+    #[inline]
+    fn file_write_all_sync(&mut self, buf: &[u8]) -> EmptyResult {
+        self.file_write_all(buf)
+    }
+
+    #[cfg(feature = "io-uring")]
+    #[inline]
+    fn reap_completions(&mut self) {
+        let VirtualDevice { ring, free_buffers, outstanding, .. } = self;
+        for cqe in ring.completion() {
+            let buf_idx = cqe.user_data() as usize;
+            if *outstanding > 0 {
+                *outstanding -= 1;
+            }
+            free_buffers.push_back(buf_idx);
+        }
     }
 
     #[inline]
@@ -329,8 +469,6 @@ impl VirtualDevice {
                 }
             }
         })
-
-        // scheduler.join().expect("Scheduler panicked");
     }
 
     #[inline]
@@ -339,10 +477,7 @@ impl VirtualDevice {
         self.sender.send(SYN_PARAMS)?;
 
         for event in self.receiver.try_iter() {
-            // let mut content = convert_event_for_writing(event.0, event.1, event.2);
-            // converted.append(&mut content);
-
-            let mut input_event = input_event {
+            let input_event = input_event {
                 time: FIXED_TIME,
                 kind: event.0,
                 code: event.1,
@@ -350,8 +485,6 @@ impl VirtualDevice {
             };
 
             unsafe {
-                // gettimeofday(&mut input_event.time, ptr::null_mut());
-
                 let ptr = &input_event as *const _ as *const u8;
                 let size = mem::size_of_val(&input_event);
                 let content = slice::from_raw_parts(ptr, size);
@@ -359,16 +492,16 @@ impl VirtualDevice {
             }
         }
 
-        self.file.write_all(converted.as_slice())?;
+        self.file_write_all(converted.as_slice())?;
         Ok(())
     }
 
     #[inline]
-    pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult{
+    pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult {
         let mut converted = Vec::new();
 
-        for event in batch{
-            let mut input_event = input_event {
+        for event in batch {
+            let input_event = input_event {
                 time: FIXED_TIME,
                 kind: event.0,
                 code: event.1,
@@ -376,24 +509,19 @@ impl VirtualDevice {
             };
 
             unsafe {
-                // gettimeofday(&mut input_event.time, ptr::null_mut());
-
                 let ptr = &input_event as *const _ as *const u8;
                 let size = mem::size_of_val(&input_event);
                 let content = slice::from_raw_parts(ptr, size);
                 converted.extend_from_slice(content);
             }
         }
-        self.file.write_all(converted.as_slice())?;
+        self.file_write_all(converted.as_slice())?;
         Ok(())
     }
 
     #[inline]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
-        // let content = convert_event_for_writing(kind, code, value);
-        // self.file.write_all(content.as_slice())?;
-
-        let mut input_event = input_event {
+        let input_event = input_event {
             time: FIXED_TIME,
             kind,
             code,
@@ -401,12 +529,10 @@ impl VirtualDevice {
         };
 
         unsafe {
-            // gettimeofday(&mut input_event.time, ptr::null_mut());
-
             let ptr = &input_event as *const _ as *const u8;
             let size = mem::size_of_val(&input_event);
             let content = slice::from_raw_parts(ptr, size);
-            self.file.write_all(content)?;
+            self.file_write_all(content)?;
         }
 
         Ok(())
@@ -504,7 +630,7 @@ impl VirtualDevice {
     pub fn buffered_gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         let mut write_buffer: Vec<EventParams> = vec![];
         let gradual_move = GradualMove::calculate(x, y);
-        
+
         for _ in 0..gradual_move.both_move {
             write_buffer.extend(self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction));
         }
@@ -514,7 +640,7 @@ impl VirtualDevice {
         for _ in 0..gradual_move.move_only_y {
             write_buffer.extend(self.buffered_move_mouse_y(gradual_move.y_direction));
         }
-        
+
         write_buffer
     }
 
@@ -542,43 +668,6 @@ impl VirtualDevice {
             SYN_PARAMS
         ])
     }
-
-    // #[inline]
-    // pub fn move_mouse_with_options(&mut self, x: Coord, y: Coord, buffered: bool, gradual_move: bool, raw_operations:bool) -> EmptyResult {
-    //     let (mouse_x, mouse_y, mouse) = match buffered {
-    //         true => {
-    //             (
-    //                 Self::buffered_move_mouse_x,
-    //                 Self::buffered_move_mouse_y,
-    //                 Self::buffered_move_mouse,
-    //             )
-    //         }
-    //         false => {
-    //             match raw_operations {
-    //                 true => {
-    //                     (
-    //                         Self::move_mouse_raw_x,
-    //                         Self::move_mouse_raw_y,
-    //                         Self::move_mouse_raw,
-    //                     )
-    //                 }
-    //                 false => {
-    //                     (
-    //                         Self::move_mouse_x,
-    //                         Self::move_mouse_y,
-    //                         Self::move_mouse,
-    //                     )
-    //                 }
-    //             }
-    //         }
-    //     };
-    //     match gradual_move {
-    //         true => {
-    //             
-    //         }
-    //         false => {}
-    //     }
-    // }
 
     #[inline]
     pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult {
@@ -724,6 +813,17 @@ impl VirtualDevice {
 
 impl Drop for VirtualDevice {
     fn drop(&mut self) {
+        #[cfg(feature = "io-uring")]
+        {
+            // Flush all pending async writes before destroying the device
+            while self.outstanding > 0 {
+                if self.ring.submit_and_wait(1).is_err() {
+                    break;
+                }
+                self.reap_completions();
+            }
+        }
+
         unsafe {
             ui_dev_destroy(self.file.as_raw_fd());
         }
