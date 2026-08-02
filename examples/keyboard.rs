@@ -1,10 +1,10 @@
-use mouse_keyboard_input::VirtualDevice;
+use mouse_keyboard_input::*;
 use mouse_keyboard_input::key_codes::*;
 use std::thread;
 use std::time::Duration;
 
 fn main() {
-    let mut device = VirtualDevice::default().unwrap();
+    let mut device = VirtualDevice::default(BackendType::Uring).unwrap();
 
     thread::sleep(Duration::from_secs(2));
 

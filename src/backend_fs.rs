@@ -1,5 +1,6 @@
 use crate::utils::GradualMove;
 use crate::*;
+use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use nix::errno::Errno;
 use std::ffi::CString;
@@ -10,11 +11,6 @@ use std::path::Path;
 use std::thread::{self, JoinHandle, sleep};
 use std::time::{Duration, Instant};
 use std::{fs, mem, slice};
-
-const UINPUT_NOT_LOADED_ERR: &str =
-    "'uinput' module probably is not loaded. try: 'sudo modprobe uinput'";
-const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
-const FIXED_TIME: libc::timeval = libc::timeval { tv_sec: 0, tv_usec: 0 };
 
 pub struct VirtualDeviceFs {
     writing_interval: Duration,

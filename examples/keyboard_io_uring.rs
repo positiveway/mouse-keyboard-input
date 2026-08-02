@@ -1,18 +1,11 @@
-#[cfg(not(feature = "io-uring"))]
-fn main() {
-    eprintln!("This test requires the 'io-uring' feature.");
-    eprintln!("Please run with: cargo run --release --example keyboard --features io-uring");
-}
+use mouse_keyboard_input::*;
+use mouse_keyboard_input::key_codes::*;
+use std::thread;
+use std::time::Duration;
 
-#[cfg(feature = "io-uring")]
 fn main() {
-    use mouse_keyboard_input::VirtualDevice;
-    use mouse_keyboard_input::key_codes::*;
-    use std::thread;
-    use std::time::Duration;
-
     println!("Initializing VirtualDevice with io_uring backend...");
-    let mut device = VirtualDevice::default().unwrap();
+    let mut device = VirtualDevice::default(BackendType::Uring).unwrap();
 
     thread::sleep(Duration::from_secs(2));
 
