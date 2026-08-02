@@ -34,6 +34,8 @@ macro_rules! uin {
 pub mod key_codes;
 mod utils;
 mod virtual_device;
+mod backend_fs;
+mod backend_io_uring;
 
 pub use crate::key_codes::*;
 pub use virtual_device::*;

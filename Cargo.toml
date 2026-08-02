@@ -14,11 +14,10 @@ repository = "https://github.com/positiveway/mouse-keyboard-input"
 [features]
 default = ["auto-acquire-permissions"]
 auto-acquire-permissions = []
-io-uring = ["dep:io-uring"]
 
 [dependencies]
 crossbeam-channel = "0.5"
 libc = "0.2"
 ioctl-sys = "0.8"
 nix = "0.31.3"
-io-uring = { version = "0.7", optional = true }
+io-uring = "0.7"
