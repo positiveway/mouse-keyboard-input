@@ -147,12 +147,12 @@ impl VirtualDevice {
                 .setup_defer_taskrun()
                 .build(IO_URING_ENTRIES)
                 .or_else(|_| IoUring::new(IO_URING_ENTRIES))
-                .map_err(|e| Box::from(format!("Failed to create io_uring: {}", e)))?;
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("Failed to create io_uring: {}", e)))?;
 
             let fds = [file.as_raw_fd()];
             r.submitter()
                 .register_files(&fds)
-                .map_err(|e| Box::from(format!("Failed to register files: {}", e)))?;
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("Failed to register files: {}", e)))?;
             r
         };
 
@@ -321,14 +321,14 @@ impl VirtualDevice {
         // Backpressure: If no free buffers or SQ is full, wait for at least 1 completion
         if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
             self.ring.submit_and_wait(1)
-                .map_err(|e| Box::from(format!("io_uring submit_and_wait failed: {}", e)))?;
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e)))?;
             self.reap_completions();
         }
 
         let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
 
         let buf_idx = free_buffers.pop_front()
-            .ok_or_else(|| Box::from("io_uring no free buffers after wait"))?;
+            .ok_or_else(|| Box::<dyn std::error::Error>::from("io_uring no free buffers after wait"))?;
 
         let buffer = &mut buffers[buf_idx];
         if buffer.len() < buf.len() {
@@ -346,14 +346,14 @@ impl VirtualDevice {
             let mut sq = ring.submission();
             unsafe {
                 sq.push(&entry)
-                    .map_err(|e| Box::from(format!("io_uring push failed: {:?}", e)))?;
+                    .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e)))?;
             }
         }
         *outstanding += 1;
 
         // Submit immediately. With DEFER_TASKRUN, this also processes any pending completions.
         ring.submit()
-            .map_err(|e| Box::from(format!("io_uring submit failed: {}", e)))?;
+            .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e)))?;
 
         Ok(())
     }
@@ -366,7 +366,7 @@ impl VirtualDevice {
         // Spin/wait until all pending async writes are completed
         while self.outstanding > 0 {
             self.ring.submit_and_wait(1)
-                .map_err(|e| Box::from(format!("io_uring sync wait failed: {}", e)))?;
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring sync wait failed: {}", e)))?;
             self.reap_completions();
         }
         Ok(())
