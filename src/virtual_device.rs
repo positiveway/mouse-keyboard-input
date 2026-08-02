@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::{fs, mem, slice, thread};
+use std::{fs, mem, ptr, slice, thread};
 use std::ffi::CString;
 use std::fs::File;
 use std::os::fd::AsRawFd;
@@ -137,14 +137,15 @@ impl VirtualDevice {
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
-        // Initialize the advanced io_ring. We use `DEFER_TASKRUN` which drastically
-        // reduces latency by moving task work to the submission thread rather than
-        // handling it via softirqs. We also register the file descriptor to avoid
-        // fd lookup overhead in the kernel on every single write.
         #[cfg(feature = "io-uring")]
         let ring = {
             let r = IoUring::builder()
                 .setup_defer_taskrun()
+                .setup_single_issuer() // Reduces kernel locking overhead
+                // SQPOLL dedicates a kernel thread to polling the submission queue.
+                // This eliminates syscalls on the hot path entirely.
+                // It will sleep after 1ms of inactivity to save CPU, and submit() will wake it.
+                .setup_sqpoll(1)
                 .build(IO_URING_ENTRIES)
                 .or_else(|_| IoUring::new(IO_URING_ENTRIES))
                 .map_err(|e| Box::<dyn std::error::Error>::from(format!("Failed to create io_uring: {}", e)))?;
@@ -307,6 +308,19 @@ impl VirtualDevice {
         Ok(())
     }
 
+    #[cfg(feature = "io-uring")]
+    #[inline(always)]
+    fn wait_till_poll_exhausted(&mut self) -> EmptyResult {
+        // Backpressure: wait if pool is exhausted
+        // Backpressure: If no free buffers or SQ is full, wait for at least 1 completion
+        if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
+            self.ring.submit_and_wait(1)
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e)))?;
+            self.reap_completions();
+        }
+        Ok(())
+    }
+
     /// Unified entry point for writing raw bytes to the uinput fd.
     /// Asynchronous when `io-uring` is enabled, synchronous otherwise.
     #[cfg(feature = "io-uring")]
@@ -318,12 +332,7 @@ impl VirtualDevice {
 
         self.reap_completions();
 
-        // Backpressure: If no free buffers or SQ is full, wait for at least 1 completion
-        if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
-            self.ring.submit_and_wait(1)
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e)))?;
-            self.reap_completions();
-        }
+        self.wait_till_poll_exhausted()?;
 
         let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
 
@@ -473,69 +482,101 @@ impl VirtualDevice {
 
     #[inline]
     fn write_events_from_channel(&mut self) -> EmptyResult {
-        let mut converted = Vec::new();
         self.sender.send(SYN_PARAMS)?;
 
+        // Collect directly into a Vec<EventParams> to avoid intermediate Vec<u8> allocation
+        let mut batch = Vec::with_capacity(64);
         for event in self.receiver.try_iter() {
-            let input_event = input_event {
-                time: FIXED_TIME,
-                kind: event.0,
-                code: event.1,
-                value: event.2,
-            };
-
-            unsafe {
-                let ptr = &input_event as *const _ as *const u8;
-                let size = mem::size_of_val(&input_event);
-                let content = slice::from_raw_parts(ptr, size);
-                converted.extend_from_slice(content);
-            }
+            batch.push(event);
         }
 
-        self.file_write_all(converted.as_slice())?;
-        Ok(())
+        // Route directly to the optimized zero-copy write_batch
+        self.write_batch(&batch)
     }
 
     #[inline]
     pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult {
-        let mut converted = Vec::new();
+        if batch.is_empty() {
+            return Ok(());
+        }
 
-        for event in batch {
-            let input_event = input_event {
-                time: FIXED_TIME,
-                kind: event.0,
-                code: event.1,
-                value: event.2,
-            };
+        #[cfg(not(feature = "io-uring"))]
+        {
+            let mut converted = Vec::with_capacity(batch.len() * mem::size_of::<input_event>());
+            for event in batch {
+                let input_event = input_event {
+                    time: FIXED_TIME,
+                    kind: event.0,
+                    code: event.1,
+                    value: event.2,
+                };
+                unsafe {
+                    let ptr = &input_event as *const _ as *const u8;
+                    let size = mem::size_of_val(&input_event);
+                    let content = slice::from_raw_parts(ptr, size);
+                    converted.extend_from_slice(content);
+                }
+            }
+            return self.file_write_all(converted.as_slice());
+        }
+
+        #[cfg(feature = "io-uring")]
+        {
+            self.reap_completions();
+
+            self.wait_till_poll_exhausted()?;
+
+            let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
+
+            let buf_idx = free_buffers.pop_front()
+                .ok_or_else(|| Box::<dyn std::error::Error>::from("io_uring no free buffers after wait"))?;
+
+            let buffer = &mut buffers[buf_idx];
+            let event_size = mem::size_of::<input_event>();
+            let required_size = batch.len() * event_size;
+
+            if buffer.len() < required_size {
+                buffer.resize(required_size, 0);
+            }
+
+            // ZERO-COPY SERIALIZATION: write input_event structs directly into the ring's memory
+            for (i, event) in batch.iter().enumerate() {
+                let input_event = input_event {
+                    time: FIXED_TIME,
+                    kind: event.0,
+                    code: event.1,
+                    value: event.2,
+                };
+                unsafe {
+                    let ptr = buffer.as_mut_ptr().add(i * event_size) as *mut input_event;
+                    ptr::write_unaligned(ptr, input_event);
+                }
+            }
+
+            let entry = opcode::Write::new(types::Fd(0), buffer.as_ptr(), required_size as u32)
+                .build()
+                .flags(squeue::Flags::FIXED_FILE)
+                .user_data(buf_idx as u64);
 
             unsafe {
-                let ptr = &input_event as *const _ as *const u8;
-                let size = mem::size_of_val(&input_event);
-                let content = slice::from_raw_parts(ptr, size);
-                converted.extend_from_slice(content);
+                ring.submission().push(&entry)
+                    .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e)))?;
             }
+            *outstanding += 1;
+
+            // With SQPOLL, this does not trigger a syscall if the kernel thread is awake.
+            // It simply updates the shared memory tail pointer.
+            ring.submit()
+                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e)))?;
+
+            Ok(())
         }
-        self.file_write_all(converted.as_slice())?;
-        Ok(())
     }
 
     #[inline]
     fn write(&mut self, kind: u16, code: u16, value: i32) -> EmptyResult {
-        let input_event = input_event {
-            time: FIXED_TIME,
-            kind,
-            code,
-            value,
-        };
-
-        unsafe {
-            let ptr = &input_event as *const _ as *const u8;
-            let size = mem::size_of_val(&input_event);
-            let content = slice::from_raw_parts(ptr, size);
-            self.file_write_all(content)?;
-        }
-
-        Ok(())
+        // Reuse the highly optimized zero-copy batch path
+        self.write_batch(&[(kind, code, value)])
     }
 
     #[inline(always)]
