@@ -136,13 +136,10 @@ impl VirtualDevice {
 
         #[cfg(feature = "io-uring")]
         let ring = {
+            // DEFER_TASKRUN reduces kernel locking overhead by running task work on the submission thread.
+            // We do NOT use SQPOLL here because we need strict synchronous execution for every event.
             let r = IoUring::builder()
                 .setup_defer_taskrun()
-                .setup_single_issuer() // Reduces kernel locking overhead
-                // SQPOLL dedicates a kernel thread to polling the submission queue.
-                // This eliminates syscalls on the hot path entirely.
-                // It will sleep after 1ms of inactivity to save CPU, and submit() will wake it.
-                .setup_sqpoll(1)
                 .build(IO_URING_ENTRIES)
                 .or_else(|_| IoUring::new(IO_URING_ENTRIES))
                 .map_err(|e| {
@@ -370,10 +367,13 @@ impl VirtualDevice {
         }
         *outstanding += 1;
 
-        // Submit immediately. With DEFER_TASKRUN, this also processes any pending completions.
-        ring.submit().map_err(|e| {
+        // SYNCHRONOUS WAIT: Guarantees the write is fully executed by the kernel before returning.
+        // This provides the strict ordering and immediate execution required for key presses.
+        ring.submit_and_wait(1).map_err(|e| {
             Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e))
         })?;
+
+        self.reap_completions();
 
         Ok(())
     }
@@ -382,15 +382,8 @@ impl VirtualDevice {
     #[cfg(feature = "io-uring")]
     #[inline]
     fn file_write_all_sync(&mut self, buf: &[u8]) -> EmptyResult {
-        self.file_write_all(buf)?;
-        // Spin/wait until all pending async writes are completed
-        while self.outstanding > 0 {
-            self.ring.submit_and_wait(1).map_err(|e| {
-                Box::<dyn std::error::Error>::from(format!("io_uring sync wait failed: {}", e))
-            })?;
-            self.reap_completions();
-        }
-        Ok(())
+        // file_write_all is already strictly synchronous in this revision
+        self.file_write_all(buf)
     }
 
     #[cfg(not(feature = "io-uring"))]
@@ -594,11 +587,12 @@ impl VirtualDevice {
             }
             *outstanding += 1;
 
-            // With SQPOLL, this does not trigger a syscall if the kernel thread is awake.
-            // It simply updates the shared memory tail pointer.
-            ring.submit().map_err(|e| {
+            // SYNCHRONOUS WAIT: Guarantees the batch is fully written before returning.
+            ring.submit_and_wait(1).map_err(|e| {
                 Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e))
             })?;
+
+            self.reap_completions();
 
             Ok(())
         }
