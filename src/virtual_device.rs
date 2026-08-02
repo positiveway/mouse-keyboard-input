@@ -1,23 +1,23 @@
-use std::path::Path;
-use std::{fs, mem, ptr, slice, thread};
+use crossbeam_channel::{Receiver, Sender, bounded};
+use nix::errno::Errno;
 use std::ffi::CString;
 use std::fs::File;
 use std::os::fd::AsRawFd;
+use std::path::Path;
 use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant};
-use nix::errno::Errno;
-use crossbeam_channel::{Sender, Receiver, bounded};
+use std::{fs, mem, ptr, slice, thread};
 
 #[cfg(not(feature = "io-uring"))]
 use std::io::Write;
 
 #[cfg(feature = "io-uring")]
-use std::collections::VecDeque;
+use io_uring::{IoUring, opcode, squeue, types};
 #[cfg(feature = "io-uring")]
-use io_uring::{IoUring, opcode, types, squeue};
+use std::collections::VecDeque;
 
-use crate::*;
 use crate::utils::GradualMove;
+use crate::*;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type EmptyResult = Result<()>;
@@ -45,7 +45,10 @@ pub struct VirtualDevice {
     outstanding: u32,
 }
 
-const FIXED_TIME: libc::timeval = libc::timeval { tv_sec: 0, tv_usec: 0 };
+const FIXED_TIME: libc::timeval = libc::timeval {
+    tv_sec: 0,
+    tv_usec: 0,
+};
 const SYN_PARAMS: EventParams = (EV_SYN, SYN_REPORT, 0);
 
 const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
@@ -62,7 +65,6 @@ const IO_URING_BUFFERS: usize = 64;
 /// Max size of a single batch write buffer.
 #[cfg(feature = "io-uring")]
 const IO_URING_BUFFER_SIZE: usize = 4096;
-
 
 #[inline(always)]
 fn convert_event_for_writing(
@@ -91,18 +93,13 @@ pub enum DeviceDefinitionType {
     None,
 }
 
-
 impl VirtualDevice {
     pub fn default() -> Result<Self> {
         Self::default_single_device(DeviceDefinitionType::None)
     }
 
     fn default_single_device(definition_type: DeviceDefinitionType) -> Result<Self> {
-        Self::new(
-            Duration::from_millis(1),
-            50,
-            definition_type,
-        )
+        Self::new(Duration::from_millis(1), 50, definition_type)
     }
 
     pub fn default_separate() -> Result<(Self, Self)> {
@@ -148,12 +145,14 @@ impl VirtualDevice {
                 .setup_sqpoll(1)
                 .build(IO_URING_ENTRIES)
                 .or_else(|_| IoUring::new(IO_URING_ENTRIES))
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("Failed to create io_uring: {}", e)))?;
+                .map_err(|e| {
+                    Box::<dyn std::error::Error>::from(format!("Failed to create io_uring: {}", e))
+                })?;
 
             let fds = [file.as_raw_fd()];
-            r.submitter()
-                .register_files(&fds)
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("Failed to register files: {}", e)))?;
+            r.submitter().register_files(&fds).map_err(|e| {
+                Box::<dyn std::error::Error>::from(format!("Failed to register files: {}", e))
+            })?;
             r
         };
 
@@ -239,11 +238,10 @@ impl VirtualDevice {
         let bytes = string.as_bytes_with_nul();
 
         if bytes.len() > UINPUT_MAX_NAME_SIZE {
-            return Err(Box::from(
-                format!(
-                    "Virtual device name is longer than maximum allowed size: {}.\nUse shorter name",
-                    UINPUT_MAX_NAME_SIZE
-                )));
+            return Err(Box::from(format!(
+                "Virtual device name is longer than maximum allowed size: {}.\nUse shorter name",
+                UINPUT_MAX_NAME_SIZE
+            )));
         }
 
         let signed_bytes: &[i8] =
@@ -314,8 +312,12 @@ impl VirtualDevice {
         // Backpressure: wait if pool is exhausted
         // Backpressure: If no free buffers or SQ is full, wait for at least 1 completion
         if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
-            self.ring.submit_and_wait(1)
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e)))?;
+            self.ring.submit_and_wait(1).map_err(|e| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "io_uring submit_and_wait failed: {}",
+                    e
+                ))
+            })?;
             self.reap_completions();
         }
         Ok(())
@@ -334,10 +336,17 @@ impl VirtualDevice {
 
         self.wait_till_poll_exhausted()?;
 
-        let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
+        let VirtualDevice {
+            ring,
+            buffers,
+            free_buffers,
+            outstanding,
+            ..
+        } = self;
 
-        let buf_idx = free_buffers.pop_front()
-            .ok_or_else(|| Box::<dyn std::error::Error>::from("io_uring no free buffers after wait"))?;
+        let buf_idx = free_buffers.pop_front().ok_or_else(|| {
+            Box::<dyn std::error::Error>::from("io_uring no free buffers after wait")
+        })?;
 
         let buffer = &mut buffers[buf_idx];
         if buffer.len() < buf.len() {
@@ -354,15 +363,17 @@ impl VirtualDevice {
         {
             let mut sq = ring.submission();
             unsafe {
-                sq.push(&entry)
-                    .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e)))?;
+                sq.push(&entry).map_err(|e| {
+                    Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e))
+                })?;
             }
         }
         *outstanding += 1;
 
         // Submit immediately. With DEFER_TASKRUN, this also processes any pending completions.
-        ring.submit()
-            .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e)))?;
+        ring.submit().map_err(|e| {
+            Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e))
+        })?;
 
         Ok(())
     }
@@ -374,8 +385,9 @@ impl VirtualDevice {
         self.file_write_all(buf)?;
         // Spin/wait until all pending async writes are completed
         while self.outstanding > 0 {
-            self.ring.submit_and_wait(1)
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring sync wait failed: {}", e)))?;
+            self.ring.submit_and_wait(1).map_err(|e| {
+                Box::<dyn std::error::Error>::from(format!("io_uring sync wait failed: {}", e))
+            })?;
             self.reap_completions();
         }
         Ok(())
@@ -397,7 +409,12 @@ impl VirtualDevice {
     #[cfg(feature = "io-uring")]
     #[inline]
     fn reap_completions(&mut self) {
-        let VirtualDevice { ring, free_buffers, outstanding, .. } = self;
+        let VirtualDevice {
+            ring,
+            free_buffers,
+            outstanding,
+            ..
+        } = self;
         for cqe in ring.completion() {
             let buf_idx = cqe.user_data() as usize;
             if *outstanding > 0 {
@@ -408,7 +425,12 @@ impl VirtualDevice {
     }
 
     #[inline]
-    pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
+    pub fn send_to_channel(
+        kind: u16,
+        code: u16,
+        value: i32,
+        sender: &ChannelSender,
+    ) -> EmptyResult {
         sender.send((kind, code, value))?;
         Ok(())
     }
@@ -526,10 +548,17 @@ impl VirtualDevice {
 
             self.wait_till_poll_exhausted()?;
 
-            let VirtualDevice { ring, buffers, free_buffers, outstanding, .. } = self;
+            let VirtualDevice {
+                ring,
+                buffers,
+                free_buffers,
+                outstanding,
+                ..
+            } = self;
 
-            let buf_idx = free_buffers.pop_front()
-                .ok_or_else(|| Box::<dyn std::error::Error>::from("io_uring no free buffers after wait"))?;
+            let buf_idx = free_buffers.pop_front().ok_or_else(|| {
+                Box::<dyn std::error::Error>::from("io_uring no free buffers after wait")
+            })?;
 
             let buffer = &mut buffers[buf_idx];
             let event_size = mem::size_of::<input_event>();
@@ -559,15 +588,17 @@ impl VirtualDevice {
                 .user_data(buf_idx as u64);
 
             unsafe {
-                ring.submission().push(&entry)
-                    .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e)))?;
+                ring.submission().push(&entry).map_err(|e| {
+                    Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e))
+                })?;
             }
             *outstanding += 1;
 
             // With SQPOLL, this does not trigger a syscall if the kernel thread is awake.
             // It simply updates the shared memory tail pointer.
-            ring.submit()
-                .map_err(|e| Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e)))?;
+            ring.submit().map_err(|e| {
+                Box::<dyn std::error::Error>::from(format!("io_uring submit failed: {}", e))
+            })?;
 
             Ok(())
         }
@@ -596,35 +627,22 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
-        ])
+        self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y)])
     }
 
     #[inline]
     pub fn buffered_move_mouse_x(&mut self, x: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_X, x),
-            SYN_PARAMS
-        ]
+        vec![(EV_REL, REL_X, x), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_move_mouse_y(&mut self, y: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ]
+        vec![(EV_REL, REL_Y, -y), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ]
+        vec![(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS]
     }
 
     #[inline]
@@ -673,7 +691,9 @@ impl VirtualDevice {
         let gradual_move = GradualMove::calculate(x, y);
 
         for _ in 0..gradual_move.both_move {
-            write_buffer.extend(self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction));
+            write_buffer.extend(
+                self.buffered_move_mouse(gradual_move.x_direction, gradual_move.y_direction),
+            );
         }
         for _ in 0..gradual_move.move_only_x {
             write_buffer.extend(self.buffered_move_mouse_x(gradual_move.x_direction));
@@ -687,27 +707,17 @@ impl VirtualDevice {
 
     #[inline]
     pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_X, x),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_REL, REL_X, x), SYN_PARAMS])
     }
 
     #[inline]
     pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_REL, REL_Y, -y), SYN_PARAMS])
     }
 
     #[inline]
     pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_X, x),
-            (EV_REL, REL_Y, -y),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS])
     }
 
     #[inline]
@@ -722,26 +732,17 @@ impl VirtualDevice {
 
     #[inline]
     pub fn buffered_scroll_x(&mut self, value: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_HWHEEL, value),
-            SYN_PARAMS
-        ]
+        vec![(EV_REL, REL_HWHEEL, value), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_scroll_y(&mut self, value: Coord) -> Vec<EventParams> {
-        vec![
-            (EV_REL, REL_WHEEL, value),
-            SYN_PARAMS
-        ]
+        vec![(EV_REL, REL_WHEEL, value), SYN_PARAMS]
     }
 
     #[inline]
     pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_HWHEEL, value),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_REL, REL_HWHEEL, value), SYN_PARAMS])
     }
 
     #[inline]
@@ -807,42 +808,27 @@ impl VirtualDevice {
 
     #[inline]
     pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
-        self.write_batch(&[
-            (EV_REL, REL_WHEEL, value),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_REL, REL_WHEEL, value), SYN_PARAMS])
     }
 
     #[inline]
-    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams>  {
-        vec![
-            (EV_KEY, button, 1),
-            SYN_PARAMS
-        ]
+    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams> {
+        vec![(EV_KEY, button, 1), SYN_PARAMS]
     }
 
     #[inline]
     pub fn buffered_release(&mut self, button: Button) -> Vec<EventParams> {
-        vec![
-            (EV_KEY, button, 0),
-            SYN_PARAMS
-        ]
+        vec![(EV_KEY, button, 0), SYN_PARAMS]
     }
 
     #[inline]
     pub fn press(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(&[
-            (EV_KEY, button, 1),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_KEY, button, 1), SYN_PARAMS])
     }
 
     #[inline]
     pub fn release(&mut self, button: Button) -> EmptyResult {
-        self.write_batch(&[
-            (EV_KEY, button, 0),
-            SYN_PARAMS
-        ])
+        self.write_batch(&[(EV_KEY, button, 0), SYN_PARAMS])
     }
 
     pub fn click(&mut self, button: Button) -> EmptyResult {
