@@ -2,11 +2,11 @@ use crate::utils::GradualMove;
 use crate::*;
 use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME};
 use crossbeam_channel::{Receiver, Sender, bounded};
-use io_uring::{opcode, squeue, types, IoUring};
+use io_uring::{opcode, types, IoUring};
 use nix::errno::Errno;
-use std::collections::VecDeque;
 use std::ffi::CString;
 use std::fs::File;
+use std::io;
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::thread::{self, JoinHandle, sleep};
@@ -14,8 +14,6 @@ use std::time::{Duration, Instant};
 use std::{fs, mem, slice};
 
 const IO_URING_ENTRIES: u32 = 64;
-const IO_URING_BUFFERS: usize = 64;
-const IO_URING_BUFFER_SIZE: usize = 4096;
 
 pub struct VirtualDeviceUring {
     writing_interval: Duration,
@@ -24,9 +22,6 @@ pub struct VirtualDeviceUring {
     pub sender: ChannelSender,
     receiver: Receiver<EventParams>,
     ring: IoUring,
-    buffers: Vec<Vec<u8>>,
-    free_buffers: VecDeque<usize>,
-    outstanding: u32,
 }
 
 impl VirtualDeviceUring {
@@ -48,23 +43,14 @@ impl VirtualDeviceUring {
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
 
-        // CRITICAL: O_NONBLOCK is required for io_uring to process writes inline.
-        // Without it, io_uring punts writes to a worker thread, breaking event
-        // ordering, adding latency, and causing evdev buffer overflows.
+        // O_NONBLOCK is required for io_uring to attempt inline write processing,
+        // avoiding worker thread dispatch that would add latency and break ordering.
         let file = OpenOptions::new()
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
         let ring = IoUring::new(IO_URING_ENTRIES)?;
-
-        let fds = [file.as_raw_fd()];
-        ring.submitter().register_files(&fds)?;
-
-        let buffers = (0..IO_URING_BUFFERS)
-            .map(|_| Vec::with_capacity(IO_URING_BUFFER_SIZE))
-            .collect();
-        let free_buffers = (0..IO_URING_BUFFERS).collect();
 
         let mut def: uinput_user_dev = unsafe { mem::zeroed() };
         let mut device_name: String;
@@ -101,9 +87,6 @@ impl VirtualDeviceUring {
             sender: s,
             receiver: r,
             ring,
-            buffers,
-            free_buffers,
-            outstanding: 0,
         };
 
         virtual_device.set_name(device_name.as_str())?;
@@ -183,82 +166,63 @@ impl VirtualDeviceUring {
         Ok(())
     }
 
-    fn reap_completions(&mut self) -> EmptyResult {
-        let mut first_error: Option<i32> = None;
-        for cqe in self.ring.completion() {
-            if self.outstanding > 0 {
-                self.outstanding -= 1;
-            }
-            self.free_buffers.push_back(cqe.user_data() as usize);
-            let res = cqe.result();
-            if res < 0 && first_error.is_none() {
-                first_error = Some(res);
-            }
-        }
-        if let Some(res) = first_error {
-            return Err(Box::from(std::io::Error::from_raw_os_error(-res)));
-        }
-        Ok(())
-    }
-
+    /// Perform a blocking write via io_uring, ensuring all bytes are written.
+    /// The data is copied into a heap-allocated buffer that lives until the
+    /// completion is reaped.  O_NONBLOCK ensures the write is attempted inline
+    /// on the calling thread, preserving event order and latency.
     fn write_all(&mut self, buf: &[u8]) -> EmptyResult {
         if buf.is_empty() {
             return Ok(());
         }
 
-        self.reap_completions()?;
+        // Copy into a dedicated buffer that outlives the operation.
+        let data = Vec::from(buf);
+        let ptr = data.as_ptr();
+        let len = data.len() as u32;
+        let fd = self.file.as_raw_fd();
 
-        while self.free_buffers.is_empty() {
-            self.ring
-                .submit_and_wait(1)
-                .map_err(|e| {
-                    Box::<dyn std::error::Error>::from(format!(
-                        "io_uring submit_and_wait (buffer wait) failed: {}",
-                        e
-                    ))
-                })?;
-            self.reap_completions()?;
-        }
-
-        let buf_idx = self
-            .free_buffers
-            .pop_front()
-            .expect("free buffer guaranteed by loop above");
-
-        let (ptr, len) = {
-            let buffer = &mut self.buffers[buf_idx];
-            if buffer.len() < buf.len() {
-                buffer.resize(buf.len(), 0);
-            }
-            buffer[..buf.len()].copy_from_slice(buf);
-            (buffer.as_ptr(), buf.len() as u32)
-        };
-
-        let entry = opcode::Write::new(types::Fd(0), ptr, len)
+        // Build the SQE.
+        let entry = opcode::Write::new(types::Fd(fd), ptr, len)
             .build()
-            .flags(squeue::Flags::FIXED_FILE)
-            .user_data(buf_idx as u64);
+            .user_data(0);
 
-        unsafe {
-            self.ring.submission().push(&entry).map_err(|e| {
-                Box::<dyn std::error::Error>::from(format!(
-                    "io_uring submission push failed: {:?}",
-                    e
-                ))
-            })?;
+        // Push to the submission queue, handling a full queue gracefully.
+        loop {
+            if unsafe { self.ring.submission().push(&entry) }.is_ok() {
+                break;
+            }
+            // Submission queue is full; flush some entries by submitting.
+            self.ring.submit()?;
         }
-        self.outstanding += 1;
 
-        self.ring
-            .submit_and_wait(self.outstanding as usize)
-            .map_err(|e| {
-                Box::<dyn std::error::Error>::from(format!(
-                    "io_uring submit_and_wait failed: {}",
-                    e
-                ))
-            })?;
+        // Submit all pending SQEs and wait for at least one completion.
+        self.ring.submit_and_wait(1)?;
 
-        self.reap_completions()?;
+        // Reap exactly one completion.
+        let cqe = self
+            .ring
+            .completion()
+            .next()
+            .ok_or_else(|| Box::<dyn std::error::Error>::from("no completion after submit_and_wait"))?;
+
+        let res = cqe.result();
+        if res < 0 {
+            let err = io::Error::from_raw_os_error(-res);
+            if err.kind() == io::ErrorKind::WouldBlock {
+                // Should not happen with uinput, but report clearly.
+                return Err(Box::new(err));
+            }
+            return Err(Box::new(err));
+        }
+        if res as usize != buf.len() {
+            return Err(Box::new(io::Error::new(
+                io::ErrorKind::Other,
+                "short write in io_uring",
+            )));
+        }
+
+        // Drain any extra completions (none expected).
+        while self.ring.completion().next().is_some() {}
 
         Ok(())
     }
@@ -518,15 +482,9 @@ impl VirtualDeviceUring {
 
 impl Drop for VirtualDeviceUring {
     fn drop(&mut self) {
+        // Drain any pending completions, then destroy the device.
         let _ = self.ring.submit();
-        while self.outstanding > 0 {
-            if self.ring.submit_and_wait(1).is_err() {
-                let _ = self.reap_completions();
-                break;
-            }
-            let _ = self.reap_completions();
-        }
-        let _ = self.reap_completions();
+        while self.ring.completion().next().is_some() {}
         unsafe {
             ui_dev_destroy(self.file.as_raw_fd());
         }
