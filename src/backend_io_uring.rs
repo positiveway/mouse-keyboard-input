@@ -48,20 +48,16 @@ impl VirtualDeviceUring {
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
 
-        // Blocking mode for the file. io_uring with blocking files applies
-        // natural backpressure and guarantees no EAGAIN event drops.
+        // CRITICAL: O_NONBLOCK is required for io_uring to process writes inline.
+        // Without it, io_uring punts writes to a worker thread, breaking event
+        // ordering, adding latency, and causing evdev buffer overflows.
         let file = OpenOptions::new()
             .write(true)
+            .custom_flags(libc::O_NONBLOCK)
             .open(path)?;
 
-        // Use a basic io_uring setup without DEFER_TASKRUN or SINGLE_ISSUER.
-        // Those advanced features defer completion task-work to io_uring_enter
-        // calls and can cause subtle ordering / visibility issues on some
-        // kernel versions. A basic ring guarantees immediate completion
-        // visibility after submit_and_wait returns.
         let ring = IoUring::new(IO_URING_ENTRIES)?;
 
-        // Register the file descriptor as a fixed file for reduced per-op overhead.
         let fds = [file.as_raw_fd()];
         ring.submitter().register_files(&fds)?;
 
@@ -187,16 +183,6 @@ impl VirtualDeviceUring {
         Ok(())
     }
 
-    /// Reap ALL available completions from the completion queue.
-    ///
-    /// This is the critical correctness fix: the previous implementation
-    /// returned early on the first error, leaving subsequent CQEs unreaped.
-    /// This caused buffer leaks (free_buffers exhaustion) and inflated
-    /// `outstanding` counters, leading to silently dropped events.
-    ///
-    /// Now we drain the entire CQ in every call, freeing all buffers and
-    /// decrementing outstanding accurately, then report the first error
-    /// if any.
     fn reap_completions(&mut self) -> EmptyResult {
         let mut first_error: Option<i32> = None;
         for cqe in self.ring.completion() {
@@ -215,29 +201,13 @@ impl VirtualDeviceUring {
         Ok(())
     }
 
-    /// Write a buffer to /dev/uinput via io_uring.
-    ///
-    /// This function is fully synchronous: it submits the SQE and waits for
-    /// its completion before returning. This guarantees strict event ordering
-    /// and immediate kernel processing — the same semantics as a blocking
-    /// write() syscall, but routed through io_uring infrastructure.
-    ///
-    /// The buffer pool (64 buffers × 4096 bytes) is used to avoid allocation
-    /// on every write. Buffers are only reused after their CQE is reaped,
-    /// preventing use-after-free of buffer data by the kernel.
     fn write_all(&mut self, buf: &[u8]) -> EmptyResult {
         if buf.is_empty() {
             return Ok(());
         }
 
-        // Step 1: Drain any available completions to free buffers and
-        // surface errors from previous operations.
         self.reap_completions()?;
 
-        // Step 2: Ensure we have a free buffer available. In normal
-        // synchronous operation this loop never executes (all buffers are
-        // free after step 1). It exists as a safety net for edge cases
-        // such as error recovery paths.
         while self.free_buffers.is_empty() {
             self.ring
                 .submit_and_wait(1)
@@ -255,12 +225,6 @@ impl VirtualDeviceUring {
             .pop_front()
             .expect("free buffer guaranteed by loop above");
 
-        // Step 3: Copy data into our managed buffer and obtain a raw pointer.
-        // The pointer remains valid because:
-        // - self.buffers[buf_idx] owns a stable heap allocation (Vec)
-        // - buf_idx is removed from free_buffers, so the buffer won't be
-        //   reused until the CQE is reaped
-        // - self.buffers itself is never reallocated after construction
         let (ptr, len) = {
             let buffer = &mut self.buffers[buf_idx];
             if buffer.len() < buf.len() {
@@ -269,19 +233,12 @@ impl VirtualDeviceUring {
             buffer[..buf.len()].copy_from_slice(buf);
             (buffer.as_ptr(), buf.len() as u32)
         };
-        // Mutable borrow of self.buffers[buf_idx] ends here; the raw pointer
-        // is valid for as long as self.buffers[buf_idx] is not moved/dropped.
 
-        // Step 4: Build the Write SQE using the fixed file index 0
-        // (registered during initialization).
         let entry = opcode::Write::new(types::Fd(0), ptr, len)
             .build()
             .flags(squeue::Flags::FIXED_FILE)
             .user_data(buf_idx as u64);
 
-        // Step 5: Push the SQE into the submission queue.
-        // This is unsafe because we're modifying the SQ ring's shared memory.
-        // Safety: we hold &mut self, guaranteeing exclusive access to the ring.
         unsafe {
             self.ring.submission().push(&entry).map_err(|e| {
                 Box::<dyn std::error::Error>::from(format!(
@@ -292,11 +249,6 @@ impl VirtualDeviceUring {
         }
         self.outstanding += 1;
 
-        // Step 6: Submit the SQE and wait for ALL outstanding operations to
-        // complete. Since we drain the CQ in step 1, outstanding should be 1
-        // here. submit_and_wait(n) blocks until at least n CQEs are available.
-        // Because the CQ was drained, this guarantees the current write's CQE
-        // is among them.
         self.ring
             .submit_and_wait(self.outstanding as usize)
             .map_err(|e| {
@@ -306,9 +258,6 @@ impl VirtualDeviceUring {
                 ))
             })?;
 
-        // Step 7: Reap the completion(s). This frees the buffer and checks
-        // for write errors. After this, outstanding returns to 0 and all
-        // buffers are back in free_buffers.
         self.reap_completions()?;
 
         Ok(())
@@ -569,37 +518,15 @@ impl VirtualDeviceUring {
 
 impl Drop for VirtualDeviceUring {
     fn drop(&mut self) {
-        // Submit any SQEs that are in the submission queue but not yet submitted.
-        // In normal synchronous operation this is a no-op (submit_and_wait in
-        // write_all already submitted everything), but it's a safety net for
-        // error recovery paths where an SQE was pushed but submit_and_wait
-        // was never reached.
         let _ = self.ring.submit();
-
-        // Wait for and reap all outstanding completions.
-        // This ensures all pending writes are fully processed by the kernel
-        // BEFORE we call ui_dev_destroy. Without this, events submitted to
-        // the uinput device could be lost when the device is destroyed.
-        //
-        // We use submit_and_wait(1) in a loop rather than submit_and_wait(n)
-        // because n (self.outstanding) might be inaccurate if an error
-        // occurred earlier. Waiting one-at-a-time is more robust.
         while self.outstanding > 0 {
             if self.ring.submit_and_wait(1).is_err() {
-                // If we can't enter the kernel (e.g., ring corrupted),
-                // try to reap whatever's available and break.
                 let _ = self.reap_completions();
                 break;
             }
             let _ = self.reap_completions();
         }
-
-        // Final drain: reap any CQEs that arrived between the loop exit
-        // and this point (kernel may have posted late completions).
         let _ = self.reap_completions();
-
-        // Now safe to destroy the uinput device — all writes are guaranteed
-        // to have been processed by the kernel.
         unsafe {
             ui_dev_destroy(self.file.as_raw_fd());
         }

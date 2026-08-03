@@ -33,6 +33,7 @@ impl VirtualDeviceFs {
             let metadata = fs::metadata(path).expect(UINPUT_NOT_LOADED_ERR);
             let mut permissions = metadata.permissions();
             permissions.set_mode(0o660);
+            let _ = fs::set_permissions(path, permissions);
         }
 
         use std::fs::OpenOptions;
