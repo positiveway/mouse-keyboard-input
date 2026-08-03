@@ -90,6 +90,19 @@ impl VirtualDevice {
         ))
     }
 
+    /// Returns a reference to the channel sender for this device.
+    ///
+    /// This allows external threads to send events to the device via
+    /// `VirtualDevice::send_*` static methods. The sender can be cloned
+    /// cheaply (reference-counted) and moved to other threads.
+    #[inline]
+    pub fn sender(&self) -> &ChannelSender {
+        match self {
+            Self::Uring(d) => &d.sender,
+            Self::Fs(d) => &d.sender,
+        }
+    }
+
     #[inline]
     pub fn send_to_channel(kind: u16, code: u16, value: i32, sender: &ChannelSender) -> EmptyResult {
         sender.send((kind, code, value))?;

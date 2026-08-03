@@ -42,28 +42,32 @@ impl VirtualDeviceUring {
             let metadata = fs::metadata(path).expect(UINPUT_NOT_LOADED_ERR);
             let mut permissions = metadata.permissions();
             permissions.set_mode(0o660);
+            let _ = fs::set_permissions(path, permissions);
         }
 
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
 
-        // O_NONBLOCK removed. In io_uring, non-blocking mode causes EAGAIN drops
-        // if the kernel event queue is momentarily full. Blocking mode applies
-        // natural backpressure and guarantees no dropped events.
+        // Blocking mode for the file. io_uring with blocking files applies
+        // natural backpressure and guarantees no EAGAIN event drops.
         let file = OpenOptions::new()
             .write(true)
             .open(path)?;
 
-        let ring = IoUring::builder()
-            .setup_defer_taskrun()
-            .setup_single_issuer()
-            .build(IO_URING_ENTRIES)
-            .or_else(|_| IoUring::new(IO_URING_ENTRIES))?;
+        // Use a basic io_uring setup without DEFER_TASKRUN or SINGLE_ISSUER.
+        // Those advanced features defer completion task-work to io_uring_enter
+        // calls and can cause subtle ordering / visibility issues on some
+        // kernel versions. A basic ring guarantees immediate completion
+        // visibility after submit_and_wait returns.
+        let ring = IoUring::new(IO_URING_ENTRIES)?;
 
+        // Register the file descriptor as a fixed file for reduced per-op overhead.
         let fds = [file.as_raw_fd()];
         ring.submitter().register_files(&fds)?;
 
-        let buffers = (0..IO_URING_BUFFERS).map(|_| Vec::with_capacity(IO_URING_BUFFER_SIZE)).collect();
+        let buffers = (0..IO_URING_BUFFERS)
+            .map(|_| Vec::with_capacity(IO_URING_BUFFER_SIZE))
+            .collect();
         let free_buffers = (0..IO_URING_BUFFERS).collect();
 
         let mut def: uinput_user_dev = unsafe { mem::zeroed() };
@@ -72,11 +76,21 @@ impl VirtualDeviceUring {
         match definition_type {
             DeviceDefinitionType::Separate => return Err(Box::from("Not implemented")),
             DeviceDefinitionType::MouseOnly => {
-                def.id = input_id { bustype: 0x0003, vendor: 0x045e, product: 0x07a5, version: 0x0111 };
+                def.id = input_id {
+                    bustype: 0x0003,
+                    vendor: 0x045e,
+                    product: 0x07a5,
+                    version: 0x0111,
+                };
                 device_name = String::from("virtual-mouse");
             }
             DeviceDefinitionType::KeyboardOnly => {
-                def.id = input_id { bustype: 0x0011, vendor: 0x0001, product: 0x0001, version: 0xab83 };
+                def.id = input_id {
+                    bustype: 0x0011,
+                    vendor: 0x0001,
+                    product: 0x0001,
+                    version: 0xab83,
+                };
                 device_name = String::from("virtual-keyboard");
             }
             DeviceDefinitionType::None => {
@@ -118,7 +132,8 @@ impl VirtualDeviceUring {
         if bytes.len() > UINPUT_MAX_NAME_SIZE {
             return Err(Box::from(format!("Name too long")));
         }
-        let signed_bytes: &[i8] = unsafe { slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
+        let signed_bytes: &[i8] =
+            unsafe { slice::from_raw_parts(bytes.as_ptr() as *const i8, bytes.len()) };
         self.def.name[..bytes.len()].clone_from_slice(signed_bytes);
         Ok(())
     }
@@ -135,8 +150,12 @@ impl VirtualDeviceUring {
     }
 
     fn register_keyboard(&self) -> EmptyResult {
-        unsafe { Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?; }
-        for code in 1..255 { self.register_key(code)?; }
+        unsafe {
+            Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
+        }
+        for code in 1..255 {
+            self.register_key(code)?;
+        }
         Ok(())
     }
 
@@ -145,85 +164,152 @@ impl VirtualDeviceUring {
             Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_KEY as i32))?;
             Errno::result(ui_set_evbit(self.file.as_raw_fd(), EV_REL as i32))?;
         }
-        for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] { self.register_key(code)?; }
-        for code in [REL_X, REL_Y, REL_HWHEEL, REL_WHEEL] { self.register_relative(code)?; }
-        Ok(())
-    }
-
-    fn register_key(&self, code: u16) -> EmptyResult {
-        unsafe { Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?; }
-        Ok(())
-    }
-
-    fn register_relative(&self, code: u16) -> EmptyResult {
-        unsafe { Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?; }
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn ensure_free_buffer(&mut self) -> EmptyResult {
-        if self.free_buffers.is_empty() || self.outstanding >= IO_URING_ENTRIES {
-            self.ring.submit_and_wait(1).map_err(|e| {
-                Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e))
-            })?;
-            self.reap_completions_and_check_errors()?;
+        for code in [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE] {
+            self.register_key(code)?;
+        }
+        for code in [REL_X, REL_Y, REL_HWHEEL, REL_WHEEL] {
+            self.register_relative(code)?;
         }
         Ok(())
     }
 
-    #[inline(always)]
-    fn reap_completions_and_check_errors(&mut self) -> EmptyResult {
+    fn register_key(&self, code: u16) -> EmptyResult {
+        unsafe {
+            Errno::result(ui_set_keybit(self.file.as_raw_fd(), code as i32))?;
+        }
+        Ok(())
+    }
+
+    fn register_relative(&self, code: u16) -> EmptyResult {
+        unsafe {
+            Errno::result(ui_set_relbit(self.file.as_raw_fd(), code as i32))?;
+        }
+        Ok(())
+    }
+
+    /// Reap ALL available completions from the completion queue.
+    ///
+    /// This is the critical correctness fix: the previous implementation
+    /// returned early on the first error, leaving subsequent CQEs unreaped.
+    /// This caused buffer leaks (free_buffers exhaustion) and inflated
+    /// `outstanding` counters, leading to silently dropped events.
+    ///
+    /// Now we drain the entire CQ in every call, freeing all buffers and
+    /// decrementing outstanding accurately, then report the first error
+    /// if any.
+    fn reap_completions(&mut self) -> EmptyResult {
+        let mut first_error: Option<i32> = None;
         for cqe in self.ring.completion() {
             if self.outstanding > 0 {
                 self.outstanding -= 1;
             }
             self.free_buffers.push_back(cqe.user_data() as usize);
             let res = cqe.result();
-            if res < 0 {
-                return Err(Box::from(std::io::Error::from_raw_os_error(-res)));
+            if res < 0 && first_error.is_none() {
+                first_error = Some(res);
             }
+        }
+        if let Some(res) = first_error {
+            return Err(Box::from(std::io::Error::from_raw_os_error(-res)));
         }
         Ok(())
     }
 
-    #[inline]
+    /// Write a buffer to /dev/uinput via io_uring.
+    ///
+    /// This function is fully synchronous: it submits the SQE and waits for
+    /// its completion before returning. This guarantees strict event ordering
+    /// and immediate kernel processing — the same semantics as a blocking
+    /// write() syscall, but routed through io_uring infrastructure.
+    ///
+    /// The buffer pool (64 buffers × 4096 bytes) is used to avoid allocation
+    /// on every write. Buffers are only reused after their CQE is reaped,
+    /// preventing use-after-free of buffer data by the kernel.
     fn write_all(&mut self, buf: &[u8]) -> EmptyResult {
         if buf.is_empty() {
             return Ok(());
         }
 
-        self.reap_completions_and_check_errors()?;
-        self.ensure_free_buffer()?;
+        // Step 1: Drain any available completions to free buffers and
+        // surface errors from previous operations.
+        self.reap_completions()?;
 
-        let buf_idx = self.free_buffers.pop_front().ok_or_else(|| {
-            Box::<dyn std::error::Error>::from("io_uring no free buffers after wait")
-        })?;
-
-        let buffer = &mut self.buffers[buf_idx];
-        if buffer.len() < buf.len() {
-            buffer.resize(buf.len(), 0);
+        // Step 2: Ensure we have a free buffer available. In normal
+        // synchronous operation this loop never executes (all buffers are
+        // free after step 1). It exists as a safety net for edge cases
+        // such as error recovery paths.
+        while self.free_buffers.is_empty() {
+            self.ring
+                .submit_and_wait(1)
+                .map_err(|e| {
+                    Box::<dyn std::error::Error>::from(format!(
+                        "io_uring submit_and_wait (buffer wait) failed: {}",
+                        e
+                    ))
+                })?;
+            self.reap_completions()?;
         }
-        buffer[..buf.len()].copy_from_slice(buf);
 
-        let entry = opcode::Write::new(types::Fd(0), buffer.as_ptr(), buf.len() as u32)
+        let buf_idx = self
+            .free_buffers
+            .pop_front()
+            .expect("free buffer guaranteed by loop above");
+
+        // Step 3: Copy data into our managed buffer and obtain a raw pointer.
+        // The pointer remains valid because:
+        // - self.buffers[buf_idx] owns a stable heap allocation (Vec)
+        // - buf_idx is removed from free_buffers, so the buffer won't be
+        //   reused until the CQE is reaped
+        // - self.buffers itself is never reallocated after construction
+        let (ptr, len) = {
+            let buffer = &mut self.buffers[buf_idx];
+            if buffer.len() < buf.len() {
+                buffer.resize(buf.len(), 0);
+            }
+            buffer[..buf.len()].copy_from_slice(buf);
+            (buffer.as_ptr(), buf.len() as u32)
+        };
+        // Mutable borrow of self.buffers[buf_idx] ends here; the raw pointer
+        // is valid for as long as self.buffers[buf_idx] is not moved/dropped.
+
+        // Step 4: Build the Write SQE using the fixed file index 0
+        // (registered during initialization).
+        let entry = opcode::Write::new(types::Fd(0), ptr, len)
             .build()
             .flags(squeue::Flags::FIXED_FILE)
             .user_data(buf_idx as u64);
 
+        // Step 5: Push the SQE into the submission queue.
+        // This is unsafe because we're modifying the SQ ring's shared memory.
+        // Safety: we hold &mut self, guaranteeing exclusive access to the ring.
         unsafe {
             self.ring.submission().push(&entry).map_err(|e| {
-                Box::<dyn std::error::Error>::from(format!("io_uring push failed: {:?}", e))
+                Box::<dyn std::error::Error>::from(format!(
+                    "io_uring submission push failed: {:?}",
+                    e
+                ))
             })?;
         }
         self.outstanding += 1;
 
-        // Submit and wait for ALL outstanding events to complete.
-        // This guarantees strict ordering and immediate execution for all event types.
-        self.ring.submit_and_wait(self.outstanding as usize).map_err(|e| {
-            Box::<dyn std::error::Error>::from(format!("io_uring submit_and_wait failed: {}", e))
-        })?;
+        // Step 6: Submit the SQE and wait for ALL outstanding operations to
+        // complete. Since we drain the CQ in step 1, outstanding should be 1
+        // here. submit_and_wait(n) blocks until at least n CQEs are available.
+        // Because the CQ was drained, this guarantees the current write's CQE
+        // is among them.
+        self.ring
+            .submit_and_wait(self.outstanding as usize)
+            .map_err(|e| {
+                Box::<dyn std::error::Error>::from(format!(
+                    "io_uring submit_and_wait failed: {}",
+                    e
+                ))
+            })?;
 
-        self.reap_completions_and_check_errors()?;
+        // Step 7: Reap the completion(s). This frees the buffer and checks
+        // for write errors. After this, outstanding returns to 0 and all
+        // buffers are back in free_buffers.
+        self.reap_completions()?;
 
         Ok(())
     }
@@ -246,16 +332,25 @@ impl VirtualDeviceUring {
     fn write_events_from_channel(&mut self) -> EmptyResult {
         self.sender.send(SYN_PARAMS)?;
         let mut batch = Vec::with_capacity(64);
-        for event in self.receiver.try_iter() { batch.push(event); }
+        for event in self.receiver.try_iter() {
+            batch.push(event);
+        }
         self.write_batch(&batch)
     }
 
     #[inline]
     pub fn write_batch(&mut self, batch: &[EventParams]) -> EmptyResult {
-        if batch.is_empty() { return Ok(()); }
+        if batch.is_empty() {
+            return Ok(());
+        }
         let mut converted = Vec::with_capacity(batch.len() * mem::size_of::<input_event>());
         for event in batch {
-            let input_event = input_event { time: FIXED_TIME, kind: event.0, code: event.1, value: event.2 };
+            let input_event = input_event {
+                time: FIXED_TIME,
+                kind: event.0,
+                code: event.1,
+                value: event.2,
+            };
             unsafe {
                 let ptr = &input_event as *const _ as *const u8;
                 let size = mem::size_of_val(&input_event);
@@ -272,28 +367,48 @@ impl VirtualDeviceUring {
     }
 
     #[inline(always)]
-    pub fn synchronize(&mut self) -> EmptyResult { self.write(EV_SYN, SYN_REPORT, 0) }
+    pub fn synchronize(&mut self) -> EmptyResult {
+        self.write(EV_SYN, SYN_REPORT, 0)
+    }
 
     #[inline]
-    pub fn move_mouse_raw_x(&mut self, x: Coord) -> EmptyResult { self.write(EV_REL, REL_X, x) }
+    pub fn move_mouse_raw_x(&mut self, x: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_X, x)
+    }
     #[inline]
-    pub fn move_mouse_raw_y(&mut self, y: Coord) -> EmptyResult { self.write(EV_REL, REL_Y, -y) }
+    pub fn move_mouse_raw_y(&mut self, y: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_Y, -y)
+    }
     #[inline]
-    pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y)]) }
+    pub fn move_mouse_raw(&mut self, x: Coord, y: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y)])
+    }
 
     #[inline]
-    pub fn buffered_move_mouse_x(&mut self, x: Coord) -> Vec<EventParams> { vec![(EV_REL, REL_X, x), SYN_PARAMS] }
+    pub fn buffered_move_mouse_x(&mut self, x: Coord) -> Vec<EventParams> {
+        vec![(EV_REL, REL_X, x), SYN_PARAMS]
+    }
     #[inline]
-    pub fn buffered_move_mouse_y(&mut self, y: Coord) -> Vec<EventParams> { vec![(EV_REL, REL_Y, -y), SYN_PARAMS] }
+    pub fn buffered_move_mouse_y(&mut self, y: Coord) -> Vec<EventParams> {
+        vec![(EV_REL, REL_Y, -y), SYN_PARAMS]
+    }
     #[inline]
-    pub fn buffered_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> { vec![(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS] }
+    pub fn buffered_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
+        vec![(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS]
+    }
 
     #[inline]
     pub fn gradual_move_mouse_raw(&mut self, x: Coord, y: Coord) -> Result<()> {
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { self.move_mouse_raw(g.x_direction, g.y_direction)?; }
-        for _ in 0..g.move_only_x { self.move_mouse_raw_x(g.x_direction)?; }
-        for _ in 0..g.move_only_y { self.move_mouse_raw_y(g.y_direction)?; }
+        for _ in 0..g.both_move {
+            self.move_mouse_raw(g.x_direction, g.y_direction)?;
+        }
+        for _ in 0..g.move_only_x {
+            self.move_mouse_raw_x(g.x_direction)?;
+        }
+        for _ in 0..g.move_only_y {
+            self.move_mouse_raw_y(g.y_direction)?;
+        }
         self.synchronize()?;
         Ok(())
     }
@@ -301,49 +416,86 @@ impl VirtualDeviceUring {
     #[inline]
     pub fn gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> {
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { self.move_mouse(g.x_direction, g.y_direction)?; }
-        for _ in 0..g.move_only_x { self.move_mouse_x(g.x_direction)?; }
-        for _ in 0..g.move_only_y { self.move_mouse_y(g.y_direction)?; }
+        for _ in 0..g.both_move {
+            self.move_mouse(g.x_direction, g.y_direction)?;
+        }
+        for _ in 0..g.move_only_x {
+            self.move_mouse_x(g.x_direction)?;
+        }
+        for _ in 0..g.move_only_y {
+            self.move_mouse_y(g.y_direction)?;
+        }
         Ok(())
     }
 
     #[inline]
-    pub fn smooth_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> { self.gradual_move_mouse_raw(x, y) }
+    pub fn smooth_move_mouse(&mut self, x: Coord, y: Coord) -> Result<()> {
+        self.gradual_move_mouse_raw(x, y)
+    }
 
     #[inline]
     pub fn buffered_gradual_move_mouse(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         let mut wb = vec![];
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { wb.extend(self.buffered_move_mouse(g.x_direction, g.y_direction)); }
-        for _ in 0..g.move_only_x { wb.extend(self.buffered_move_mouse_x(g.x_direction)); }
-        for _ in 0..g.move_only_y { wb.extend(self.buffered_move_mouse_y(g.y_direction)); }
+        for _ in 0..g.both_move {
+            wb.extend(self.buffered_move_mouse(g.x_direction, g.y_direction));
+        }
+        for _ in 0..g.move_only_x {
+            wb.extend(self.buffered_move_mouse_x(g.x_direction));
+        }
+        for _ in 0..g.move_only_y {
+            wb.extend(self.buffered_move_mouse_y(g.y_direction));
+        }
         wb
     }
 
     #[inline]
-    pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_X, x), SYN_PARAMS]) }
+    pub fn move_mouse_x(&mut self, x: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_X, x), SYN_PARAMS])
+    }
     #[inline]
-    pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_Y, -y), SYN_PARAMS]) }
+    pub fn move_mouse_y(&mut self, y: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_Y, -y), SYN_PARAMS])
+    }
     #[inline]
-    pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS]) }
+    pub fn move_mouse(&mut self, x: Coord, y: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_X, x), (EV_REL, REL_Y, -y), SYN_PARAMS])
+    }
 
     #[inline]
-    pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult { self.write(EV_REL, REL_HWHEEL, value) }
+    pub fn scroll_raw_x(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_HWHEEL, value)
+    }
     #[inline]
-    pub fn scroll_raw_y(&mut self, value: Coord) -> EmptyResult { self.write(EV_REL, REL_WHEEL, value) }
+    pub fn scroll_raw_y(&mut self, value: Coord) -> EmptyResult {
+        self.write(EV_REL, REL_WHEEL, value)
+    }
     #[inline]
-    pub fn buffered_scroll_x(&mut self, value: Coord) -> Vec<EventParams> { vec![(EV_REL, REL_HWHEEL, value), SYN_PARAMS] }
+    pub fn buffered_scroll_x(&mut self, value: Coord) -> Vec<EventParams> {
+        vec![(EV_REL, REL_HWHEEL, value), SYN_PARAMS]
+    }
     #[inline]
-    pub fn buffered_scroll_y(&mut self, value: Coord) -> Vec<EventParams> { vec![(EV_REL, REL_WHEEL, value), SYN_PARAMS] }
+    pub fn buffered_scroll_y(&mut self, value: Coord) -> Vec<EventParams> {
+        vec![(EV_REL, REL_WHEEL, value), SYN_PARAMS]
+    }
     #[inline]
-    pub fn scroll_x(&mut self, value: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_HWHEEL, value), SYN_PARAMS]) }
+    pub fn scroll_x(&mut self, value: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_HWHEEL, value), SYN_PARAMS])
+    }
 
     #[inline]
     pub fn gradual_scroll_raw(&mut self, x: Coord, y: Coord) -> Result<()> {
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { self.scroll_raw_x(g.x_direction)?; self.scroll_raw_y(g.y_direction)?; }
-        for _ in 0..g.move_only_x { self.scroll_raw_x(g.x_direction)?; }
-        for _ in 0..g.move_only_y { self.scroll_raw_y(g.y_direction)?; }
+        for _ in 0..g.both_move {
+            self.scroll_raw_x(g.x_direction)?;
+            self.scroll_raw_y(g.y_direction)?;
+        }
+        for _ in 0..g.move_only_x {
+            self.scroll_raw_x(g.x_direction)?;
+        }
+        for _ in 0..g.move_only_y {
+            self.scroll_raw_y(g.y_direction)?;
+        }
         self.synchronize()?;
         Ok(())
     }
@@ -351,36 +503,62 @@ impl VirtualDeviceUring {
     #[inline]
     pub fn gradual_scroll(&mut self, x: Coord, y: Coord) -> Result<()> {
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { self.scroll_x(g.x_direction)?; self.scroll_y(g.y_direction)?; }
-        for _ in 0..g.move_only_x { self.scroll_x(g.x_direction)?; }
-        for _ in 0..g.move_only_y { self.scroll_y(g.y_direction)?; }
+        for _ in 0..g.both_move {
+            self.scroll_x(g.x_direction)?;
+            self.scroll_y(g.y_direction)?;
+        }
+        for _ in 0..g.move_only_x {
+            self.scroll_x(g.x_direction)?;
+        }
+        for _ in 0..g.move_only_y {
+            self.scroll_y(g.y_direction)?;
+        }
         Ok(())
     }
 
     #[inline]
-    pub fn smooth_scroll(&mut self, x: Coord, y: Coord) -> Result<()> { self.gradual_scroll_raw(x, y) }
+    pub fn smooth_scroll(&mut self, x: Coord, y: Coord) -> Result<()> {
+        self.gradual_scroll_raw(x, y)
+    }
 
     #[inline]
     pub fn buffered_gradual_scroll(&mut self, x: Coord, y: Coord) -> Vec<EventParams> {
         let mut wb = vec![];
         let g = GradualMove::calculate(x, y);
-        for _ in 0..g.both_move { wb.extend(self.buffered_scroll_x(g.x_direction)); wb.extend(self.buffered_scroll_y(g.y_direction)); }
-        for _ in 0..g.move_only_x { wb.extend(self.buffered_scroll_x(g.x_direction)); }
-        for _ in 0..g.move_only_y { wb.extend(self.buffered_scroll_y(g.y_direction)); }
+        for _ in 0..g.both_move {
+            wb.extend(self.buffered_scroll_x(g.x_direction));
+            wb.extend(self.buffered_scroll_y(g.y_direction));
+        }
+        for _ in 0..g.move_only_x {
+            wb.extend(self.buffered_scroll_x(g.x_direction));
+        }
+        for _ in 0..g.move_only_y {
+            wb.extend(self.buffered_scroll_y(g.y_direction));
+        }
         wb
     }
 
     #[inline]
-    pub fn scroll_y(&mut self, value: Coord) -> EmptyResult { self.write_batch(&[(EV_REL, REL_WHEEL, value), SYN_PARAMS]) }
+    pub fn scroll_y(&mut self, value: Coord) -> EmptyResult {
+        self.write_batch(&[(EV_REL, REL_WHEEL, value), SYN_PARAMS])
+    }
 
     #[inline]
-    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams> { vec![(EV_KEY, button, 1), SYN_PARAMS] }
+    pub fn buffered_press(&mut self, button: Button) -> Vec<EventParams> {
+        vec![(EV_KEY, button, 1), SYN_PARAMS]
+    }
     #[inline]
-    pub fn buffered_release(&mut self, button: Button) -> Vec<EventParams> { vec![(EV_KEY, button, 0), SYN_PARAMS] }
+    pub fn buffered_release(&mut self, button: Button) -> Vec<EventParams> {
+        vec![(EV_KEY, button, 0), SYN_PARAMS]
+    }
     #[inline]
-    pub fn press(&mut self, button: Button) -> EmptyResult { self.write_batch(&[(EV_KEY, button, 1), SYN_PARAMS]) }
+    pub fn press(&mut self, button: Button) -> EmptyResult {
+        self.write_batch(&[(EV_KEY, button, 1), SYN_PARAMS])
+    }
     #[inline]
-    pub fn release(&mut self, button: Button) -> EmptyResult { self.write_batch(&[(EV_KEY, button, 0), SYN_PARAMS]) }
+    pub fn release(&mut self, button: Button) -> EmptyResult {
+        self.write_batch(&[(EV_KEY, button, 0), SYN_PARAMS])
+    }
 
     pub fn click(&mut self, button: Button) -> EmptyResult {
         self.press(button)?;
@@ -391,14 +569,37 @@ impl VirtualDeviceUring {
 
 impl Drop for VirtualDeviceUring {
     fn drop(&mut self) {
-        // Flush all pending async writes before destroying the device
+        // Submit any SQEs that are in the submission queue but not yet submitted.
+        // In normal synchronous operation this is a no-op (submit_and_wait in
+        // write_all already submitted everything), but it's a safety net for
+        // error recovery paths where an SQE was pushed but submit_and_wait
+        // was never reached.
         let _ = self.ring.submit();
+
+        // Wait for and reap all outstanding completions.
+        // This ensures all pending writes are fully processed by the kernel
+        // BEFORE we call ui_dev_destroy. Without this, events submitted to
+        // the uinput device could be lost when the device is destroyed.
+        //
+        // We use submit_and_wait(1) in a loop rather than submit_and_wait(n)
+        // because n (self.outstanding) might be inaccurate if an error
+        // occurred earlier. Waiting one-at-a-time is more robust.
         while self.outstanding > 0 {
             if self.ring.submit_and_wait(1).is_err() {
+                // If we can't enter the kernel (e.g., ring corrupted),
+                // try to reap whatever's available and break.
+                let _ = self.reap_completions();
                 break;
             }
-            let _ = self.reap_completions_and_check_errors();
+            let _ = self.reap_completions();
         }
+
+        // Final drain: reap any CQEs that arrived between the loop exit
+        // and this point (kernel may have posted late completions).
+        let _ = self.reap_completions();
+
+        // Now safe to destroy the uinput device — all writes are guaranteed
+        // to have been processed by the kernel.
         unsafe {
             ui_dev_destroy(self.file.as_raw_fd());
         }

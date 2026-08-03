@@ -21,7 +21,7 @@ fn write_events_in_thread(sender: ChannelSender) -> JoinHandle<()> {
 fn main() {
     let device = VirtualDevice::default(BackendType::Fs).unwrap();
 
-    let sender = device.sender.clone();
+    let sender = device.sender().clone();
 
     device.flush_channel_every_interval();
 
