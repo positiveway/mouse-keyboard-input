@@ -1,6 +1,6 @@
 use crate::utils::GradualMove;
 use crate::*;
-use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME};
+use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME, POST_WRITE_DELAY_MS};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use nix::errno::Errno;
 use std::ffi::CString;
@@ -303,6 +303,10 @@ impl VirtualDeviceFs {
 
 impl Drop for VirtualDeviceFs {
     fn drop(&mut self) {
+        // Give the input subsystem time to process the last events
+        // before destroying the device.
+        sleep(Duration::from_millis(POST_WRITE_DELAY_MS));
+
         unsafe { ui_dev_destroy(self.file.as_raw_fd()); }
     }
 }

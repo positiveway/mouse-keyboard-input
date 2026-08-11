@@ -21,6 +21,10 @@ pub(crate) const UINPUT_NOT_LOADED_ERR: &str =
 pub(crate) const SLEEP_BEFORE_RELEASE: Duration = Duration::from_millis(5);
 pub(crate) const FIXED_TIME: libc::timeval = libc::timeval { tv_sec: 0, tv_usec: 0 };
 
+/// Minimum time to wait after the last write before destroying the
+/// uinput device, allowing the input subsystem to consume all events.
+pub(crate) const POST_WRITE_DELAY_MS: u64 = 100;
+
 #[derive(Clone)]
 pub enum DeviceDefinitionType {
     Separate,

@@ -1,6 +1,6 @@
 use crate::utils::GradualMove;
 use crate::*;
-use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME};
+use crate::virtual_device::{UINPUT_NOT_LOADED_ERR, SLEEP_BEFORE_RELEASE, FIXED_TIME, POST_WRITE_DELAY_MS};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use io_uring::{opcode, types, IoUring};
 use nix::errno::Errno;
@@ -482,9 +482,15 @@ impl VirtualDeviceUring {
 
 impl Drop for VirtualDeviceUring {
     fn drop(&mut self) {
-        // Drain any pending completions, then destroy the device.
+        // Ensure any in-flight I/O is completed
         let _ = self.ring.submit();
         while self.ring.completion().next().is_some() {}
+
+        // Allow the input subsystem time to consume all events
+        // before the device is destroyed. This prevents stuck keys
+        // and late-delivered text.
+        sleep(Duration::from_millis(POST_WRITE_DELAY_MS));
+
         unsafe {
             ui_dev_destroy(self.file.as_raw_fd());
         }
